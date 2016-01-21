@@ -130,8 +130,17 @@ class TransferWorker:
             defaultDelegation['server_key'] = self.config.serviceKey
         self.valid_proxy = False
         self.user_proxy = None
-        self.valid_proxy = True
-        self.user_proxy = "/home/dciangot/disk1/103pre11/current/proxy"
+        try:
+            defaultDelegation['userDN'] = self.userDN
+            defaultDelegation['group'] = self.group
+            defaultDelegation['role'] = self.role
+            self.valid_proxy, self.user_proxy = getProxy(defaultDelegation, self.logger)
+        except Exception, ex:
+            msg = "Error getting the user proxy"
+            msg += str(ex)
+            msg += str(traceback.format_exc())
+            self.logger.error(msg)
+
 
         # Set up a factory for loading plugins
         self.factory = WMFactory(self.config.pluginDir, namespace=self.config.pluginDir)
