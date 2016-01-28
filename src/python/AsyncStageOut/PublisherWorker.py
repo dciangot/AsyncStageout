@@ -88,16 +88,16 @@ class PublisherWorker:
                 self.cache_area = self.config.cache_area
             except IndexError:
                 self.logger.error('MyproxyAccount parameter cannot be retrieved from %s . Fallback to user cache_area  ' % (self.config.cache_area))
-		query = {'key':self.user}
-           	try:
+	        query = {'key':self.user}
+       	        try:
                     self.user_cache_area = self.db.loadView('DBSPublisher', 'cache_area', query)['rows']
-		except Exception as ex:
+	        except Exception as ex:
                     msg = "Error getting user cache_area"
                     msg += str(ex)
                     msg += str(traceback.format_exc())
                     self.logger.error(msg)
                 try:
-                    self.cache_area = self.user_cache_area[0]['value'][0]+self.user_cache_area[0]['value'][1]
+                    self.cache_area = self.user_cache_area[0]['value'][0]+self.user_cache_area[0]['value'][1]+'/filemetadata'
                     defaultDelegation['myproxyAccount'] = re.compile('https?://([^/]*)/.*').findall(self.cache_area)[0]
                 except IndexError:
                     self.logger.error('MyproxyAccount parameter cannot be retrieved from %s' % (self.cache_area))
@@ -211,7 +211,15 @@ class PublisherWorker:
                     wf_jobs_endtime.append(int(time.mktime(time.strptime(str(job_end_time), '%Y-%m-%d %H:%M:%S'))) - time.timezone)
                 source_lfn = active_file['value'][1]
                 dest_lfn = active_file['value'][2]
-                self.lfn_map[dest_lfn] = source_lfn
+                ## TODO: The next if is needed only for backward compatibility, because old
+                ## documents were injected with source_lfn not including 'temp' when direct
+                ## stageout was done. This has been changed in CRAB 3.3.1508. So in October we
+                ## can remove the next if and just leave:
+                #self.lfn_map[dest_lfn] = source_lfn
+                if not source_lfn.startswith('/store/temp/'):
+                    self.lfn_map[dest_lfn] = source_lfn.replace('/store/', '/store/temp/', 1)
+                else:
+                    self.lfn_map[dest_lfn] = source_lfn
                 if not pnn or not input_dataset or not input_dbs_url:
                     pnn = str(active_file['value'][0])
                     input_dataset = str(active_file['value'][3])
@@ -286,28 +294,45 @@ class PublisherWorker:
                 try:
                     _, res_ = self.connection.request(url, data, header, doseq=True, ckey=self.userProxy, cert=self.userProxy)#, verbose=True)# for debug
                 except Exception as ex:
-                    msg  = "Error retrieving status from cache."
+                    msg  = "Error retrieving status from cache. Fall back to user cache area"
                     msg += str(ex)
                     msg += str(traceback.format_exc())
                     self.logger.error(wfnamemsg+msg)
-                else:
-                    msg = "Status retrieved from cache. Loading task status."
-                    self.logger.info(wfnamemsg+msg)
+                    query = {'key':self.user}
                     try:
-                        buf.close()
-                        res = json.loads(res_)
-                        workflow_status = res['result'][0]['status']
-                        msg = "Task status is %s." % (workflow_status)
-                        self.logger.info(wfnamemsg+msg)
-                    except ValueError:
-                        msg = "Workflow removed from WM."
-                        self.logger.error(wfnamemsg+msg)
-                        workflow_status = 'REMOVED'
+                        self.user_cache_area = self.db.loadView('DBSPublisher', 'cache_area', query)['rows']
                     except Exception as ex:
-                        msg  = "Error loading task status!"
-                        msg += str(ex)
-                        msg += str(traceback.format_exc())
-                        self.logger.error(wfnamemsg+msg)
+                        msg = "Error getting user cache_area"
+                    	msg += str(ex)
+                    	msg += str(traceback.format_exc())
+                    	self.logger.error(msg)
+            	   
+		    self.cache_area = self.user_cache_area[0]['value'][0]+self.user_cache_area[0]['value'][1]+'/filemetadata'
+                    try:
+                    	_, res_ = self.connection.request(url, data, header, doseq=True, ckey=self.userProxy, cert=self.userProxy)#, verbose=True)# for debug
+                    except Exception as ex:
+                    	msg  = "Error retrieving status from user cache area."
+                    	msg += str(ex)
+                    	msg += str(traceback.format_exc())
+                    	self.logger.error(wfnamemsg+msg) 
+                
+                msg = "Status retrieved from cache. Loading task status."
+                self.logger.info(wfnamemsg+msg)
+                try:
+                   buf.close()
+                   res = json.loads(res_)
+                   workflow_status = res['result'][0]['status']
+                   msg = "Task status is %s." % (workflow_status)
+                   self.logger.info(wfnamemsg+msg)
+                except ValueError:
+                   msg = "Workflow removed from WM."
+                   self.logger.error(wfnamemsg+msg)
+                   workflow_status = 'REMOVED'
+                except Exception as ex:
+                   msg  = "Error loading task status!"
+                   msg += str(ex)
+                   msg += str(traceback.format_exc())
+                   self.logger.error(wfnamemsg+msg)
                 ## If the workflow status is terminal, go ahead and publish all the ready files
                 ## in the workflow.
                 if workflow_status in ['COMPLETED', 'FAILED', 'KILLED', 'REMOVED']:
@@ -495,8 +520,12 @@ class PublisherWorker:
         msg = "Grouping publication description files according to output dataset."
         self.logger.info(wfnamemsg+msg)
         publDescFiles = {}
-        for publDescFile in publDescFiles_list:
-            dataset = str(publDescFile['outdataset'])
+        for publDescF in publDescFiles_list:
+            try: 
+               publDescFile = json.loads(publDescF)
+               dataset = str(publDescFile['outdataset'])
+	    except Exception, ex:
+               self.logger.error(ex)	
             publDescFiles.setdefault(dataset, []).append(publDescFile)
         msg = "Publication description files: %s" % (publDescFiles)
         self.logger.debug(wfnamemsg+msg)
@@ -866,10 +895,6 @@ class PublisherWorker:
         results = {}
         failure_reason = {}
 
-        # In the case of MC input (or something else which has no 'real' input dataset),
-        # we simply call the input dataset by the primary DS name (/foo/).
-        noInput = len(inputDataset.split("/")) <= 3
-
         READ_PATH = "/DBSReader"
         READ_PATH_1 = "/DBSReader/"
 
@@ -895,8 +920,18 @@ class PublisherWorker:
         self.logger.debug(wfnamemsg+"Migration API URL: %s" % self.publish_migrate_url)
         migrateApi = dbsClient.DbsApi(url=self.publish_migrate_url, proxy=proxy)
 
-        if not noInput:
+        ## The 'inputdataset' field in the Couch documents may not be a real input of
+        ## the file we want to publish, given that CRAB also puts in that field primary
+        ## datasets when it runs PrivateMC workflows and Analysis workflows with users
+        ## input files. So we try to distinguish here between these two situations: is
+        ## 'inputdataset' a parent of the file we have to publish or not.
+        isRealInput = False
+        if len(inputDataset.split('/')) == 4:
             existing_datasets = sourceApi.listDatasets(dataset=inputDataset, detail=True, dataset_access_type='*')
+            if existing_datasets:
+                isRealInput = True
+
+        if isRealInput:
             primary_ds_type = existing_datasets[0]['primary_ds_type']
             # There's little chance this is correct, but it's our best guess for now.
             # CRAB2 uses 'crab2_tag' for all cases
