@@ -11,20 +11,22 @@ There should be one worker per user transfer.
 
 
 '''
-from WMCore.Database.CMSCouch import CouchServer
-
-import time
-import logging
 import os
+import re
+import json
+import time
+import urllib
+import logging
 import datetime
 import traceback
+
 from WMCore.WMFactory import WMFactory
-import urllib
-import re
 from WMCore.Credential.Proxy import Proxy
+from WMCore.Database.CMSCouch import CouchServer
+
 from AsyncStageOut import getHashLfn
 from AsyncStageOut import getDNFromUserName
-import json
+from AsyncStageOut import getCommonLogFormatter
 
 def getProxy(userdn, group, role, defaultDelegation, logger):
     """
@@ -59,6 +61,9 @@ class ReporterWorker:
         self.dropbox_dir = '%s/dropbox/inputs' % self.config.componentDir
         logging.basicConfig(level=config.log_level)
         self.logger = logging.getLogger('AsyncTransfer-Reporter-%s' % self.user)
+        formatter = getCommonLogFormatter(self.config)
+        for handler in logging.getLogger().handlers:
+            handler.setFormatter(formatter)
         self.uiSetupScript = getattr(self.config, 'UISetupScript', None)
         self.cleanEnvironment = ''
         self.userDN = ''
@@ -171,7 +176,7 @@ class ReporterWorker:
 
                     if 'Failed' or 'abandoned' or 'Canceled' or 'lost' in json_data['transferStatus']:
                         # Sort failed files
-                        failed_indexes = [i for i, x in enumerate(json_data['transferStatus']) if x == 'Failed']
+                        failed_indexes = [i for i, x in enumerate(json_data['transferStatus']) if x == 'Failed' or x == 'Canceled']
                         abandoned_indexes = [i for i, x in enumerate(json_data['transferStatus']) if x == 'abandoned']
                         failed_indexes.extend(abandoned_indexes)
                         self.logger.info('failed indexes %s' % len(failed_indexes))
@@ -308,6 +313,10 @@ class ReporterWorker:
                     data['end_time'] = now
                 else:
                     data['state'] = 'retry'
+                    fatal_error = self.determine_fatal_error(failures_reasons[files.index(lfn)])
+                    if fatal_error:
+                        data['state'] = 'failed'
+                        data['end_time'] = now
 
                 self.logger.debug("Failure list: %s" % failures_reasons)
                 self.logger.debug("Files: %s" % files)
@@ -341,6 +350,26 @@ class ReporterWorker:
             else: updated_lfn.append(docId)
         self.logger.debug("failed file updated")
         return updated_lfn
+
+    def determine_fatal_error(self, failure=""):
+        """
+        Determine if transfer error is fatal or not.
+        """
+        permanent_failure_reasons = [
+                             ".*canceled because it stayed in the queue for too long.*",
+                             ".*permission denied.*",
+                             ".*disk quota exceeded.*",
+                             ".*operation not permitted*",
+                             ".*mkdir\(\) fail.*",
+                             ".*open/create error.*",
+                             ".*mkdir\: cannot create directory.*",
+                             ".*does not have enough space.*"
+                                    ]
+        failure = str(failure).lower()
+        for permanent_failure_reason in permanent_failure_reasons:
+            if re.match(permanent_failure_reason, failure):
+                return True
+        return False
 
     def mark_incomplete(self, files=[]):
         """
