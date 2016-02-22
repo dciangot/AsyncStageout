@@ -145,6 +145,14 @@ class MonitorWorker:
         success = False
 	while not success:
 	 success = True
+	 files = os.listdir('/data/srv/asyncstageout/v1.0.4/install/asyncstageout/AsyncTransfer/dropbox/outputs/%s'%self.user)
+         def keys_map(inputDict):
+                """
+                Map function.
+                """
+                return inputDict.split(".")[1]
+         self.jobids = map(keys_map, files)
+
 	 for jid in self.jobids:
 	    self.jobid=jid
             command = "glite-transfer-status -l -s %s %s" \
