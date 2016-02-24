@@ -32,8 +32,6 @@ Add required worker modules to work threads
         # in case nothing was configured we have a fallback.
         myThread = threading.currentThread()
 
-        logging.debug("CIAOOOOOO")
-
         myThread.workerThreadManager.addWorker( \
                               MonitorDaemon(self.config), \
                               self.config.AsyncTransfer.pollInterval \
