@@ -15,6 +15,8 @@ from time import strftime
 from AsyncStageOut import getHashLfn
 from AsyncStageOut import getDNFromUserName
 from WMCore.Credential.Proxy import Proxy
+from WMCore.Services.pycurl_manager import RequestHandler
+import StringIO
 
 def getProxy(userdn, group, role, defaultDelegation, logger):
     """
@@ -155,11 +157,34 @@ class MonitorWorker:
 
 	 for jid in self.jobids:
 	    self.jobid=jid
-            command = "glite-transfer-status -l -s %s %s" \
-                    % (self.config.fts_server, self.jobid)
-            result, rc = execute_command(command, self.logger, self.commandTimeout)
-            self.logger.info("job %s status: %s" % (self.jobid, result.split("\n")[0]))
-            if "Finished" in result.split("\n")[0] or result.split("\n")[0]=="Failed":
+	    self.logger.debug("Connecting to REST FTS for job %s" % self.jobid)
+            url = self.config.fts_server + '/jobs/%s' % self.jobid
+            self.logger.debug("FTS server: %s" % self.config.fts_server)
+            heade = {"Content-Type ":"application/json"}
+            buf = StringIO.StringIO()
+	    datares=''	
+            try:
+                connection = RequestHandler(config={'timeout': 300, 'connecttimeout' : 300})
+            except Exception, ex:
+                msg = str(ex)
+                msg += str(traceback.format_exc())
+                self.logger.debug(msg)
+            try:
+                response, datares = connection.request(url, {}, heade, verb='GET', doseq=True, ckey=self.userProxy, \
+                                                       cert=self.userProxy, capath='/etc/grid-security/certificates', \
+                                                       cainfo=self.userProxy, verbose=False)
+                self.logger.debug('job status: %s' % json.loads(datares)["job_state"])
+            except Exception as ex:
+                msg = "Error submitting to FTS: %s " % url
+                msg += str(ex)
+                msg += str(traceback.format_exc())
+                self.logger.debug(msg)
+                submission_error = True
+            buf.close()
+	
+
+
+	    if "FINISHED" in json.loads(datares)["job_state"] or json.loads(datares)["job_state"]=="FAILED":	
 		self.jobids.remove(jid)
                 reporter = {
                         "LFNs": [],
@@ -174,18 +199,39 @@ class MonitorWorker:
                 timestamps = []
                 user = ''
 
-                for source_ in result.split("\n"):
-                    if "Source:" in source_:
-                        source = "/store/temp/user/%s" % source_.split(":      ")[1].split("/user/")[1]
-                        index = result.split("\n").index(source_)
-                        state = result.split("\n")[index+2].split(":       ")[1]
-                        reason = result.split("\n")[index+4].split(":      ")[1]
-                        user = source_.split(":      ")[1].split("/user/")[1].split(".")[0]
+		url = self.config.fts_server + '/jobs/%s/files' % self.jobid
+            	buf = StringIO.StringIO()
+            	try:
+                	connection = RequestHandler(config={'timeout': 300, 'connecttimeout' : 300})
+            	except Exception, ex:
+                	msg = str(ex)
+                	msg += str(traceback.format_exc())
+                	self.logger.debug(msg)
+            	try:
+                	response, datares = connection.request(url, {}, heade, verb='GET', doseq=True, ckey=self.userProxy, \
+                                                       cert=self.userProxy, capath='/etc/grid-security/certificates', \
+                                                       cainfo=self.userProxy, verbose=False)
+                	self.logger.debug('Retriving file transfer statuses')
+            	except Exception as ex:
+                	msg = "Error submitting to FTS: %s " % url
+                	msg += str(ex)
+                	msg += str(traceback.format_exc())
+                	self.logger.debug(msg)
+                	submission_error = True
+            	buf.close()
+
+
+                for source_ in json.loads(datares):
+                        source = "/store/temp/user/%s" % source_["source_surl"].split("/user/")[1]
+                        state = source_["file_state"]
+                        reason = source_["reason"] 
+                        user = self.user
+			timestamp = source_["finish_time"]
+			timestamps.append(timestamp) 
                         lfns.append(source)
                         statuses.append(state)
                         reasons.append(reason)
-                        timestamps.append('')
-                        self.logger.debug("ASO doc %s of user %s in state %s" % (getHashLfn(source), user, state))
+                        self.logger.debug("ASO doc %s of user %s in state %s (%s)" % (getHashLfn(source), user, state, timestamps))
 
                 reporter["LFNs"] = lfns
                 reporter["transferStatus"] = statuses
