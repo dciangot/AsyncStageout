@@ -8,15 +8,14 @@ import time
 import logging
 import subprocess
 import os
-import datetime
 import traceback
 import json
-from time import strftime
 from AsyncStageOut import getHashLfn
 from AsyncStageOut import getDNFromUserName
 from WMCore.Credential.Proxy import Proxy
 from WMCore.Services.pycurl_manager import RequestHandler
 import StringIO
+
 
 def getProxy(userdn, group, role, defaultDelegation, logger):
     """
@@ -32,12 +31,13 @@ def getProxy(userdn, group, role, defaultDelegation, logger):
     proxyPath = proxy.getProxyFilename( True )
     timeleft = proxy.getTimeLeft( proxyPath )
     if timeleft is not None and timeleft > 3600:
-        return (True, proxyPath)
+        return True, proxyPath
     proxyPath = proxy.logonRenewMyProxy()
-    timeleft = proxy.getTimeLeft( proxyPath )
+    timeleft = proxy.getTimeLeft(proxyPath)
     if timeleft is not None and timeleft > 0:
-        return (True, proxyPath)
-    return (False, None)
+        return True, proxyPath
+    return False, None
+
 
 def execute_command(command, logger, timeout):
     """
@@ -86,7 +86,7 @@ class MonitorWorker:
         self.logger.debug("Trying to get DN for %s" %self.user)
         try:
             self.userDN = getDNFromUserName(self.user, self.logger)
-        except Exception, ex:
+        except Exception as ex:
             msg = "Error retrieving the user DN"
             msg += str(ex)
             msg += str(traceback.format_exc())
@@ -119,11 +119,12 @@ class MonitorWorker:
 
         self.logger.debug('cache: %s' %self.config.cache_area)
         self.valid = False
+        proxy=''
         try:
 
             self.valid, proxy = getProxy(self.userDN, "", "", defaultDelegation, self.logger)
 
-        except Exception, ex:
+        except Exception as ex:
 
             msg = "Error getting the user proxy"
             msg += str(ex)
@@ -145,115 +146,114 @@ class MonitorWorker:
         """
         """
         success = False
-	while not success:
-	 success = True
-	 files = os.listdir('/data/srv/asyncstageout/v1.0.4/install/asyncstageout/AsyncTransfer/dropbox/outputs/%s'%self.user)
-         def keys_map(inputDict):
-                """
-                Map function.
-                """
-                return inputDict.split(".")[1]
-         self.jobids = map(keys_map, files)
+        while not success:
+            success = True
+            files = os.listdir('/data/srv/asyncstageout/v1.0.4/install/asyncstageout/AsyncTransfer/dropbox/outputs/%s'%self.user)
+            def keys_map(inputDict):
+                    """
+                    Map function.
+                    """
+                    return inputDict.split(".")[1]
+            self.jobids = map(keys_map, files)
 
-	 for jid in self.jobids:
-	    self.jobid=jid
-	    self.logger.debug("Connecting to REST FTS for job %s" % self.jobid)
-            url = self.config.fts_server + '/jobs/%s' % self.jobid
-            self.logger.debug("FTS server: %s" % self.config.fts_server)
             heade = {"Content-Type ":"application/json"}
-            buf = StringIO.StringIO()
-	    datares=''	
-            try:
-                connection = RequestHandler(config={'timeout': 300, 'connecttimeout' : 300})
-            except Exception, ex:
-                msg = str(ex)
-                msg += str(traceback.format_exc())
-                self.logger.debug(msg)
-            try:
-                response, datares = connection.request(url, {}, heade, verb='GET', doseq=True, ckey=self.userProxy, \
-                                                       cert=self.userProxy, capath='/etc/grid-security/certificates', \
-                                                       cainfo=self.userProxy, verbose=False)
-                self.logger.debug('job status: %s' % json.loads(datares)["job_state"])
-            except Exception as ex:
-                msg = "Error submitting to FTS: %s " % url
-                msg += str(ex)
-                msg += str(traceback.format_exc())
-                self.logger.debug(msg)
-                submission_error = True
-            buf.close()
-	
-
-
-	    if "FINISHED" in json.loads(datares)["job_state"] or json.loads(datares)["job_state"]=="FAILED":	
-		self.jobids.remove(jid)
-                reporter = {
-                        "LFNs": [],
-                        "transferStatus": [],
-                        "failure_reason": [],
-                        "timestamp": [],
-                        "username": ""
-                }
-                lfns = []
-                statuses = []
-                reasons = []
-                timestamps = []
-                user = ''
-
-		url = self.config.fts_server + '/jobs/%s/files' % self.jobid
-            	buf = StringIO.StringIO()
-            	try:
-                	connection = RequestHandler(config={'timeout': 300, 'connecttimeout' : 300})
-            	except Exception, ex:
-                	msg = str(ex)
-                	msg += str(traceback.format_exc())
-                	self.logger.debug(msg)
-            	try:
-                	response, datares = connection.request(url, {}, heade, verb='GET', doseq=True, ckey=self.userProxy, \
-                                                       cert=self.userProxy, capath='/etc/grid-security/certificates', \
-                                                       cainfo=self.userProxy, verbose=False)
-                	self.logger.debug('Retriving file transfer statuses')
-            	except Exception as ex:
-                	msg = "Error submitting to FTS: %s " % url
-                	msg += str(ex)
-                	msg += str(traceback.format_exc())
-                	self.logger.debug(msg)
-                	submission_error = True
-            	buf.close()
-
-
-                for source_ in json.loads(datares):
-                        source = "/store/temp/user/%s" % source_["source_surl"].split("/user/")[1]
-                        state = source_["file_state"]
-                        reason = source_["reason"] 
-                        user = self.user
-			timestamp = source_["finish_time"]
-			timestamps.append(timestamp) 
-                        lfns.append(source)
-                        statuses.append(state)
-                        reasons.append(reason)
-                        self.logger.debug("ASO doc %s of user %s in state %s (%s)" % (getHashLfn(source), user, state, timestamps))
-
-                reporter["LFNs"] = lfns
-                reporter["transferStatus"] = statuses
-                reporter["username"] = user
-                reporter["reasons"] = reasons
-                reporter["timestamp"] = timestamps
-
-                report_j = json.dumps(reporter)
-
-                self.logger.debug("Creating report %s" % report_j)
+            for jid in self.jobids:
+                self.jobid=jid
+                self.logger.debug("Connecting to REST FTS for job %s" % self.jobid)
+                url = self.config.fts_server + '/jobs/%s' % self.jobid
+                self.logger.debug("FTS server: %s" % self.config.fts_server)
+                buf = StringIO.StringIO()
+                datares=''
                 try:
-                    if not os.path.exists(self.config.componentDir+"/work/%s" %user):
-                        os.makedirs(self.config.componentDir+"/work/%s" %user)
-                    out_file = open(self.config.componentDir+"/work/%s/Reporter.%s.json"%(user,self.jobid),"w")
-                    out_file.write(report_j)
-                    out_file.close()
-		    os.remove('/data/srv/asyncstageout/v1.0.4/install/asyncstageout/AsyncTransfer/dropbox/outputs/%s/Monitor.%s.json'%(user,self.jobid))
+                    connection = RequestHandler(config={'timeout': 300, 'connecttimeout' : 300})
                 except Exception as ex:
-                    msg="Cannot create fts job report: %s" %ex
-                    self.logger.error(msg)
-		
-	    else:
-		success = False	
-         time.sleep(self.config.job_poll_intervall)
-        return
+                    msg = str(ex)
+                    msg += str(traceback.format_exc())
+                    self.logger.debug(msg)
+                try:
+                    response, datares = connection.request(url, {}, heade, verb='GET', doseq=True, ckey=self.userProxy,
+                                                           cert=self.userProxy,
+                                                           capath='/etc/grid-security/certificates',
+                                                           cainfo=self.userProxy, verbose=False)
+                    self.logger.debug('job status: %s' % json.loads(datares)["job_state"])
+                except Exception as ex:
+                    msg = "Error submitting to FTS: %s " % url
+                    msg += str(ex)
+                    msg += str(traceback.format_exc())
+                    self.logger.debug(msg)
+                buf.close()
+
+                if "FINISHED" in json.loads(datares)["job_state"] or json.loads(datares)["job_state"] == "FAILED":
+                    self.jobids.remove(jid)
+                    reporter = {
+                                "LFNs": [],
+                                "transferStatus": [],
+                                "failure_reason": [],
+                                "timestamp": [],
+                                "username": ""
+                    }
+                    lfns = []
+                    statuses = []
+                    reasons = []
+                    timestamps = []
+                    user = ''
+
+                    url = self.config.fts_server + '/jobs/%s/files' % self.jobid
+                    buf = StringIO.StringIO()
+                    try:
+                        connection = RequestHandler(config={'timeout': 300, 'connecttimeout' : 300})
+                    except Exception as ex:
+                        msg = str(ex)
+                        msg += str(traceback.format_exc())
+                        self.logger.debug(msg)
+                    try:
+                        response, datares = connection.request(url, {}, heade, verb='GET', doseq=True, ckey=self.userProxy,
+                                                               cert=self.userProxy,
+                                                               capath='/etc/grid-security/certificates',
+                                                               cainfo=self.userProxy, verbose=False)
+                        self.logger.debug('Retriving file transfer statuses')
+                    except Exception as ex:
+                        msg = "Error submitting to FTS: %s " % url
+                        msg += str(ex)
+                        msg += str(traceback.format_exc())
+                        self.logger.debug(msg)
+                        submission_error = True
+                    buf.close()
+
+
+                    for source_ in json.loads(datares):
+                            source = "/store/temp/user/%s" % source_["source_surl"].split("/user/")[1]
+                            state = source_["file_state"]
+                            reason = source_["reason"]
+                            user = self.user
+                            timestamp = source_["finish_time"]
+                            timestamps.append(timestamp)
+                            lfns.append(source)
+                            statuses.append(state)
+                            reasons.append(reason)
+                            self.logger.debug("ASO doc %s of user %s in state %s (%s)" % \
+                                              (getHashLfn(source), user, state, timestamps))
+
+                    reporter["LFNs"] = lfns
+                    reporter["transferStatus"] = statuses
+                    reporter["username"] = user
+                    reporter["reasons"] = reasons
+                    reporter["timestamp"] = timestamps
+
+                    report_j = json.dumps(reporter)
+
+                    self.logger.debug("Creating report %s" % report_j)
+                    try:
+                        if not os.path.exists(self.config.componentDir+"/work/%s" %user):
+                            os.makedirs(self.config.componentDir+"/work/%s" %user)
+                        out_file = open(self.config.componentDir+"/work/%s/Reporter.%s.json"%(user,self.jobid),"w")
+                        out_file.write(report_j)
+                        out_file.close()
+                        os.remove('/data/srv/asyncstageout/v1.0.4/install/asyncstageout/AsyncTransfer/dropbox/outputs/%s/Monitor.%s.json'%(user,self.jobid))
+                    except Exception as ex:
+                        msg="Cannot create fts job report: %s" %ex
+                        self.logger.error(msg)
+
+                else:
+                    success = False
+                    time.sleep(self.config.job_poll_intervall)
