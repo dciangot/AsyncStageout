@@ -66,7 +66,7 @@ class TransferWorker:
         self.role = user[2]
         self.tfc_map = tfc_map
         self.config = config
-        self.dropbox_dir = '%s/dropbox/outputs' % self.config.componentDir
+        self.dropbox_dir = '%s/dropbox/outputs/%s' % (self.user, self.config.componentDir)
         logging.basicConfig(level=config.log_level)
         self.logger = logging.getLogger('AsyncTransfer-Worker-%s' % self.user)
         formatter = getCommonLogFormatter(self.config)
@@ -251,12 +251,13 @@ class TransferWorker:
                     jobs_lfn[(source, destination)] = lfn_list
                     jobs_pfn[(source, destination)] = pfn_list
                     jobs_report[(source, destination)] = dash_report
-                    self.logger.debug('FTS job ready for submission over  %s ---> %s ...going to next job' % (source, destination))
+                    self.logger.debug('FTS job ready for submission over  %s ---> %s ...going to next job'
+                                      % (source, destination))
 
             self.logger.debug('ftscp input created for %s (%s jobs)' % (self.user, len(jobs.keys())))
             return jobs, jobs_lfn, jobs_pfn, jobs_report
-        except:
-            self.logger.exception("fail")
+        except Exception as ex:
+            self.logger.exception("fail: %s" % ex)
             return jobs, jobs_lfn, jobs_pfn, jobs_report
 
     def apply_tfc_to_lfn(self, file):
@@ -284,7 +285,7 @@ class TransferWorker:
                 self.logger.error('Broken tfc for file %s at site %s' % (lfn, site))
                 return None
             # Add the pfn key into pfn-to-lfn mapping
-            if pfn not self.pfn_to_lfn_mapping:
+            if pfn not in self.pfn_to_lfn_mapping:
                 self.pfn_to_lfn_mapping[pfn] = lfn
             return pfn
         else:
@@ -342,15 +343,17 @@ class TransferWorker:
             self.logger.debug("link: %s -> %s" % link)
             heade = {"Content-Type ":"application/json"}
             buf = StringIO.StringIO()
+            datares=''
             try:
                 connection = RequestHandler(config={'timeout': 300, 'connecttimeout' : 300})
-            except Exception, ex:
+            except Exception as ex:
                 msg = str(ex)
                 msg += str(traceback.format_exc())
                 self.logger.debug(msg)
             try:
-                response, datares = connection.request(url, rest_copyjob, heade, verb='POST', doseq=True, ckey=self.user_proxy, \
-                                                       cert=self.user_proxy, capath='/etc/grid-security/certificates', \
+                response, datares = connection.request(url, rest_copyjob, heade, verb='POST',
+                                                       doseq=True, ckey=self.user_proxy,
+                                                       cert=self.user_proxy, capath='/etc/grid-security/certificates',
                                                        cainfo=self.user_proxy, verbose=True)
                 self.logger.debug("Submission done")
                 self.logger.debug('Submission header status: %s' % response.status)
@@ -364,6 +367,8 @@ class TransferWorker:
                 failure_reasons.append(msg)
                 submission_error = True
             buf.close()
+            job_id = 0
+            fileId_list = []
             if not submission_error:
                 res = {}
                 try:
@@ -384,8 +389,9 @@ class TransferWorker:
                     self.logger.debug("Submitting to %s" % file_url)
                     file_buf = StringIO.StringIO()
                     try:
-                        response, files_ = connection.request(file_url, {}, heade, doseq=True, ckey=self.user_proxy, \
-                                                              cert=self.user_proxy, capath='/etc/grid-security/certificates', \
+                        response, files_ = connection.request(file_url, {}, heade, doseq=True, ckey=self.user_proxy,
+                                                              cert=self.user_proxy,
+                                                              capath='/etc/grid-security/certificates',
                                                               cainfo=self.user_proxy, verbose=True)
                         files_res = json.loads(files_)
                     except Exception as ex:
@@ -453,7 +459,7 @@ class TransferWorker:
             if task.split()[0] == 'None' or task.split()[1] == 'None': return False
         return True
 
-    def mark_acquired(self, files=[]):
+    def mark_acquired(self, files):
         """
         Mark the list of files as tranferred
         """
@@ -496,7 +502,7 @@ class TransferWorker:
                 self.mark_good([good_lfn])
         return lfn_in_transfer, dash_rep
 
-    def mark_good(self, files=[]):
+    def mark_good(self, files):
         """
         Mark the list of files as tranferred
         """
@@ -538,7 +544,7 @@ class TransferWorker:
                     continue
         self.logger.debug("transferred file updated")
 
-    def mark_failed(self, files=[], force_fail=False, submission_error=False, failure_reasons=[]):
+    def mark_failed(self, files, force_fail=False, submission_error=False, failure_reasons):
         """
         Something failed for these files so increment the retry count
         """
@@ -609,7 +615,7 @@ class TransferWorker:
         self.logger.debug("failed file updated")
         return updated_lfn
 
-    def mark_incomplete(self, files=[]):
+    def mark_incomplete(self, files):
         """
         Mark the list of files as acquired
         """
