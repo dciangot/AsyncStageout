@@ -17,13 +17,14 @@ from multiprocessing import Pool
 result_list = []
 current_running = []
 
-def monitor(user, jobids, config):
+
+def monitor(user, config):
     """
     Each worker executes this function.
     """
     logging.debug("Trying to start the worker")
     try:
-        worker = MonitorWorker(user, jobids , config)
+        worker = MonitorWorker(user, config)
     except Exception as ex:
         logging.debug("Worker cannot be created!: %s" %ex)
         return jobids
@@ -46,6 +47,7 @@ def log_result(result):
     """
     result_list.append(result)
     current_running.remove(result)
+
 
 class MonitorDaemon(BaseWorkerThread):
     """
@@ -78,8 +80,7 @@ class MonitorDaemon(BaseWorkerThread):
         self.pool = Pool(processes=self.config.pool_size)
         self.factory = WMFactory(self.config.schedAlgoDir, namespace = self.config.schedAlgoDir)
 
-
-    def algorithm(self, parameters = None):
+    def algorithm(self, parameters=None):
         """
 
         """
@@ -91,24 +92,19 @@ class MonitorDaemon(BaseWorkerThread):
             users = files
         else:
             sorted_jobs = self.factory.loadObject(self.config.algoName,
-                                                  args = [self.config, self.logger, files, self.config.pool_size],
-                                                  getFromCache = False, listFlag = True)
+                                                  args=[self.config, self.logger, files, self.config.pool_size],
+                                                  getFromCache=False, listFlag=True)
             users = sorted_jobs()[:self.config.pool_size]
         self.logger.debug('Number of users in monitor: %s' % len(current_running))
 
         for user in users:
-            files = os.listdir('/data/srv/asyncstageout/v1.0.4/install/asyncstageout/AsyncTransfer/dropbox/outputs/%s'%user)
-            if len(files)>0:
-                def keys_map(inputDict):
-                    """
-                    Map function.
-                    """
-                    return inputDict.split(".")[1]
-                jobs = map(keys_map, files)
+            files = os.listdir('/data/srv/asyncstageout/v1.0.4/install/asyncstageout/AsyncTransfer/dropbox/outputs/%s'
+                               % user)
+            if len(files) > 0:
                 if user not in current_running:
-                    self.logger.debug('monitoring job IDs: %s' % jobs)
+                    self.logger.debug('Starting monitor for %s\'s jobs %s' % user)
                     current_running.append(user)
-                    self.pool.apply_async(monitor,(user,jobs, self.config), callback = log_result)
+                    self.pool.apply_async(monitor,(user, self.config), callback = log_result)
 
     def terminate(self, parameters = None):
         """

@@ -67,11 +67,10 @@ def execute_command(command, logger, timeout):
 
 class MonitorWorker:
 
-    def __init__(self,user, job, config):
+    def __init__(self, user, config):
         """
         store the user and tfc the worker
         """
-        self.jobids = job 
         self.config = config
         self.logger = logging.getLogger('MonitorTransfer-Worker-%s' % user)
         self.commandTimeout = 1200
@@ -79,9 +78,6 @@ class MonitorWorker:
         self.init = True
         if getattr(self.config, 'cleanEnvironment', False):
             self.cleanEnvironment = 'unset LD_LIBRARY_PATH; unset X509_USER_CERT; unset X509_USER_KEY;'
-        # TODO: improve how the worker gets a log
-
-
         self.user = user
         self.logger.debug("Trying to get DN for %s" %self.user)
         try:
@@ -157,7 +153,7 @@ class MonitorWorker:
             self.jobids = map(keys_map, files)
 
             heade = {"Content-Type ":"application/json"}
-            for jid in self.jobids:
+            for jid in self.jobids[self.config.jobs_per_user]:
                 self.jobid=jid
                 self.logger.debug("Connecting to REST FTS for job %s" % self.jobid)
                 url = self.config.fts_server + '/jobs/%s' % self.jobid
