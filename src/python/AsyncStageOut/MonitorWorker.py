@@ -67,12 +67,14 @@ def execute_command(command, logger, timeout):
 
 class MonitorWorker:
 
-    def __init__(self, user, config):
+    def __init__(self, user, split, list, config):
         """
         store the user and tfc the worker
         """
+        self.split = split
+        self.jobids = list
         self.config = config
-        self.logger = logging.getLogger('MonitorTransfer-Worker-%s' % user)
+        self.logger = logging.getLogger('MonitorTransfer-Worker-%s-%s' % (user, self.split))
         self.commandTimeout = 1200
         self.uiSetupScript = getattr(self.config, 'UISetupScript', None)
         self.init = True
@@ -144,16 +146,8 @@ class MonitorWorker:
         success = False
         while not success:
             success = True
-            files = os.listdir('/data/srv/asyncstageout/v1.0.4/install/asyncstageout/AsyncTransfer/dropbox/outputs/%s'%self.user)
-            def keys_map(inputDict):
-                    """
-                    Map function.
-                    """
-                    return inputDict.split(".")[1]
-            self.jobids = map(keys_map, files)
-
             heade = {"Content-Type ":"application/json"}
-            for jid in self.jobids[self.config.jobs_per_user]:
+            for jid in self.jobids:
                 self.jobid=jid
                 self.logger.debug("Connecting to REST FTS for job %s" % self.jobid)
                 url = self.config.fts_server + '/jobs/%s' % self.jobid
@@ -213,7 +207,6 @@ class MonitorWorker:
                         msg += str(ex)
                         msg += str(traceback.format_exc())
                         self.logger.debug(msg)
-                        submission_error = True
                     buf.close()
 
 
@@ -245,7 +238,8 @@ class MonitorWorker:
                         out_file = open(self.config.componentDir+"/work/%s/Reporter.%s.json"%(user,self.jobid),"w")
                         out_file.write(report_j)
                         out_file.close()
-                        os.remove('/data/srv/asyncstageout/v1.0.4/install/asyncstageout/AsyncTransfer/dropbox/outputs/%s/Monitor.%s.json'%(user,self.jobid))
+                        os.remove('/data/srv/asyncstageout/v1.0.4/install/asyncstageout/AsyncTransfer/dropbox/outputs/%s/Monitor.%s.json'
+                                  %(user,self.jobid))
                     except Exception as ex:
                         msg="Cannot create fts job report: %s" %ex
                         self.logger.error(msg)

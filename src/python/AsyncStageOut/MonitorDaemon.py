@@ -18,16 +18,16 @@ result_list = []
 current_running = []
 
 
-def monitor(user, config):
+def monitor(user, split, list, config):
     """
     Each worker executes this function.
     """
     logging.debug("Trying to start the worker")
     try:
-        worker = MonitorWorker(user, config)
+        worker = MonitorWorker(user, split, list, config)
     except Exception as ex:
         logging.debug("Worker cannot be created!: %s" %ex)
-        return jobids
+        return
     logging.debug("Worker created and init %s" % worker.init)
     if worker.init:
         logging.debug("Starting %s" %worker)
@@ -35,7 +35,7 @@ def monitor(user, config):
             worker()
         except Exception as ex:
             logging.debug("Worker cannot start!: %s" %ex)
-            return user
+            return
     else:
         logging.debug("Worker cannot be initialized!")
     return user
@@ -59,7 +59,6 @@ class MonitorDaemon(BaseWorkerThread):
         Initialise class members
         """
         BaseWorkerThread.__init__(self)
-        # self.logger is set up by the BaseWorkerThread, we just set it's level
         self.logger.info('Configuration loaded1')
 
         self.config = config.Monitor
@@ -95,16 +94,20 @@ class MonitorDaemon(BaseWorkerThread):
                                                   args=[self.config, self.logger, files, self.config.pool_size],
                                                   getFromCache=False, listFlag=True)
             users = sorted_jobs()[:self.config.pool_size]
-        self.logger.debug('Number of users in monitor: %s' % len(current_running))
+        self.logger.debug('Number of monitor active threads: %s' % len(current_running))
 
         for user in users:
             files = os.listdir('/data/srv/asyncstageout/v1.0.4/install/asyncstageout/AsyncTransfer/dropbox/outputs/%s'
                                % user)
             if len(files) > 0:
-                if user not in current_running:
-                    self.logger.debug('Starting monitor for %s\'s jobs %s' % user)
-                    current_running.append(user)
-                    self.pool.apply_async(monitor,(user, self.config), callback = log_result)
+                files = files[:self.max_jobs_per_user]
+                for split in range(0, len(files)//self.jobs_per_thread-1):
+                    user_s = user+'/%s' % split
+                    files = files[split*self.jobs_per_thread:(split+1)*self.jobs_per_thread]
+                    if user_s not in current_running:
+                        self.logger.debug('Starting monitor for %s\'s jobs, split %s' % (user, split))
+                        current_running.append(user_s)
+                        self.pool.apply_async(monitor, (user, split, files, self.config), callback=log_result)
 
     def terminate(self, parameters = None):
         """
