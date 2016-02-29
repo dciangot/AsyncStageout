@@ -416,7 +416,7 @@ class TransferWorker:
                 self.logger.debug("Submission failed")
                 self.logger.info("Mark failed %s files" % len(jobs_lfn[link]))
                 self.logger.debug("Mark failed %s files" % jobs_lfn[link])
-                failed_files = self.mark_failed(jobs_lfn[link], force_fail=False, submission_error=True, failure_reasons=failure_reasons)
+                failed_files = self.mark_failed(jobs_lfn[link], force_fail=False, submission_error=True)
                 self.logger.info("Marked failed %s" % len(failed_files))
                 continue
             fts_job['userProxyPath'] = self.user_proxy
@@ -544,7 +544,7 @@ class TransferWorker:
                     continue
         self.logger.debug("transferred file updated")
 
-    def mark_failed(self, files, force_fail=False, submission_error=False, failure_reasons):
+    def mark_failed(self, files, force_fail=False, submission_error=False):
         """
         Something failed for these files so increment the retry count
         """
