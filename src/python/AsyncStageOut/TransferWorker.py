@@ -18,8 +18,6 @@ import datetime
 import StringIO
 import traceback
 import subprocess
-from threading import Thread
-from Queue import Queue
 
 from WMCore.WMFactory import WMFactory
 from WMCore.Database.CMSCouch import CouchServer
@@ -68,7 +66,7 @@ class TransferWorker:
         self.role = user[2]
         self.tfc_map = tfc_map
         self.config = config
-        self.dropbox_dir = '%s/dropbox/outputs/%s' % (self.config.componentDir, self.user)
+        self.dropbox_dir = '%s/dropbox/outputs/%s' % (self.user, self.config.componentDir)
         logging.basicConfig(level=config.log_level)
         self.logger = logging.getLogger('AsyncTransfer-Worker-%s' % self.user)
         formatter = getCommonLogFormatter(self.config)
@@ -153,7 +151,7 @@ class TransferWorker:
             msg += str(ex)
             msg += str(traceback.format_exc())
             self.logger.error(msg)
-            
+
     def __call__(self):
         """
         a. makes the ftscp copyjob
@@ -170,28 +168,11 @@ class TransferWorker:
             jobs, jobs_lfn, jobs_pfn, jobs_report = self.files_for_transfer()
             self.logger.debug("Processing files for %s " %self.user_proxy)
             if jobs:
-                transfer = Queue(maxsize=0)
-                for bulk in range(0, len(jobs)//self.config.max_files_per_transfer):
-                    start_it = bulk*self.config.max_files_per_transfer
-                    end_it = (bulk+1)*self.config.max_files_per_transfer
-                    transfer.put(jobs[start_it:end_it], jobs_lfn[start_it, end_it], jobs_pfn[start_it, end_it],
-                                 jobs_report[start_it:end_it])
-                for i in range(4):
-                    worker = Thread(target=submit, args=(i, transfer))
-                    worker.setDaemon(True)
-                    worker.start()
-                transfer.join()
-
+                self.command(jobs, jobs_lfn, jobs_pfn, jobs_report)
         else:
             self.logger.debug("User proxy of %s could not be delagated! Trying next time." % self.user)
         self.logger.info('Transfers completed')
         return
-
-    def submit(i, q):
-        while True:
-            doc = q.get()
-            self.command(doc["jobs"], doc["jobs_lfn"], doc["jobs_pfn"], doc["jobs_report"])
-            q.task_done()
 
     def source_destinations_by_user(self):
         """
@@ -199,6 +180,7 @@ class TransferWorker:
         """
         query = {'group': True,
                  'startkey':[self.user, self.group, self.role], 'endkey':[self.user, self.group, self.role, {}, {}]}
+                 #'stale': 'ok'}
         try:
             sites = self.db.loadView('AsyncTransfer', 'ftscp_all', query)
         except:
@@ -217,19 +199,20 @@ class TransferWorker:
         jobs_lfn = {}
         jobs_pfn = {}
         jobs_report = {}
+        failed_files = []
         self.logger.info('%s has %s links to transfer on: %s' % (self.user, len(source_dests), str(source_dests)))
         try:
             for (source, destination) in source_dests:
                 # We could push applying the TFC into the list function, not sure if
                 # this would be faster, but might use up less memory. Probably more
                 # complicated, though.
-                query = {'reduce': False,
-                         'limit': self.config.max_files_per_transfer*100,
-                         'key': [self.user, self.group, self.role, destination, source],
+                query = {'reduce':False,
+                         'limit': self.config.max_files_per_transfer,
+                         'key':[self.user, self.group, self.role, destination, source],
                          'stale': 'ok'}
                 try:
                     active_files = self.db.loadView('AsyncTransfer', 'ftscp_all', query)['rows']
-                except():
+                except:
                     continue
                 self.logger.debug('%s has %s files to transfer from %s to %s' % (self.user, len(active_files),
                                                                                  source, destination))
