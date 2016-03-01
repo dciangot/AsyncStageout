@@ -38,7 +38,7 @@ def monitor(user, split, list, config):
             return
     else:
         logging.debug("Worker cannot be initialized!")
-    return user
+    return user+'/%s' % split
 
 
 def log_result(result):
@@ -100,10 +100,15 @@ class MonitorDaemon(BaseWorkerThread):
             files = os.listdir('/data/srv/asyncstageout/v1.0.4/install/asyncstageout/AsyncTransfer/dropbox/outputs/%s'
                                % user)
             if len(files) > 0:
-                files = files[:self.max_jobs_per_user]
-                for split in range(0, len(files)//self.jobs_per_thread):
+                files_ = files[:self.config.max_jobs_per_user]
+		self.logger.debug('Split numbers: %s. files: %s' % (len(files)//self.config.jobs_per_thread, files))
+                for split in range(0, len(files)//self.config.jobs_per_thread):
                     user_s = user+'/%s' % split
-                    files = files[split*self.jobs_per_thread:(split+1)*self.jobs_per_thread]
+		    self.logger.debug('Split from: %s to %s' % (split*self.config.jobs_per_thread,(split+1)*self.config.jobs_per_thread))	
+		    start_ = split*self.config.jobs_per_thread
+		    end_ = (split+1)*self.config.jobs_per_thread	
+                    files = files_[split*self.config.jobs_per_thread:(split+1)*self.config.jobs_per_thread]
+		    self.logger.debug('Split: %s. files: %s' % (split, files))	
                     if user_s not in current_running:
                         self.logger.debug('Starting monitor for %s\'s jobs, split %s' % (user, split))
                         current_running.append(user_s)

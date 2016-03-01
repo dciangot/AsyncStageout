@@ -122,8 +122,9 @@ class TransferDaemon(BaseDaemon):
                 site_tfc_map[site] = self.get_tfc_rules(site)
         self.logger.debug('kicking off pool')
         for u in users:
-            self.logger.debug('current_running %s' %current_running)
-            if u not in current_running:
+	    if "dciangot" in u:	
+             self.logger.debug('current_running %s' %current_running)
+             if u not in current_running:
                 self.logger.debug('processing %s' %u)
                 current_running.append(u)
                 self.logger.debug('processing %s' %current_running)

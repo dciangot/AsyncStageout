@@ -148,7 +148,7 @@ class MonitorWorker:
             success = True
             heade = {"Content-Type ":"application/json"}
             for jid in self.jobids:
-                self.jobid=jid
+                self.jobid=jid.split(".")[1]
                 self.logger.debug("Connecting to REST FTS for job %s" % self.jobid)
                 url = self.config.fts_server + '/jobs/%s' % self.jobid
                 self.logger.debug("FTS server: %s" % self.config.fts_server)

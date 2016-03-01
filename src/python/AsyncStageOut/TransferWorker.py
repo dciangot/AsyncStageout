@@ -55,6 +55,7 @@ def execute_command(command, logger, timeout):
     logger.debug('Executing : \n command : %s\n output : %s\n error: %s\n retcode : %s' % (command, stdout, stderr, rc))
     return stdout, rc
 
+
 class TransferWorker:
 
     def __init__(self, user, tfc_map, config):
@@ -66,7 +67,7 @@ class TransferWorker:
         self.role = user[2]
         self.tfc_map = tfc_map
         self.config = config
-        self.dropbox_dir = '%s/dropbox/outputs/%s' % (self.user, self.config.componentDir)
+        self.dropbox_dir = '%s/dropbox/outputs/%s' % (self.config.componentDir, self.user)
         logging.basicConfig(level=config.log_level)
         self.logger = logging.getLogger('AsyncTransfer-Worker-%s' % self.user)
         formatter = getCommonLogFormatter(self.config)
@@ -141,6 +142,7 @@ class TransferWorker:
             defaultDelegation['server_key'] = self.config.serviceKey
         self.valid_proxy = False
         self.user_proxy = None
+<<<<<<< Updated upstream
         try:
             defaultDelegation['userDN'] = self.userDN
             defaultDelegation['group'] = self.group
@@ -152,6 +154,25 @@ class TransferWorker:
             msg += str(traceback.format_exc())
             self.logger.error(msg)
 
+=======
+	self.valid_proxy = True
+        self.user_proxy = '/data/srv/asyncstageout/state/asyncstageout/creds/OpsProxy'          
+
+    def submit(i, q):
+      self.logger.debug("debug:")
+      while True:
+       try:
+                doc = q.get()
+		self.logger.debug("debug: %s " % doc)
+                self.command(doc["jobs"], doc["jobs_lfn"], doc["jobs_pfn"], doc["jobs_report"])
+       except Exception as ex:
+                self.logger.error("3: %s " % ex)
+
+      q.task_done()
+	
+
+ 
+>>>>>>> Stashed changes
     def __call__(self):
         """
         a. makes the ftscp copyjob
@@ -166,14 +187,22 @@ class TransferWorker:
         stdout, rc = execute_command(command, self.logger, self.commandTimeout)
         if not rc or not self.valid_proxy:
             jobs, jobs_lfn, jobs_pfn, jobs_report = self.files_for_transfer()
-            self.logger.debug("Processing files for %s " %self.user_proxy)
+            self.logger.debug("Processing files for %s " %self.user)
             if jobs:
+<<<<<<< Updated upstream
                 self.command(jobs, jobs_lfn, jobs_pfn, jobs_report)
+=======
+		self.command(jobs, jobs_lfn, jobs_pfn, jobs_report)
+>>>>>>> Stashed changes
         else:
             self.logger.debug("User proxy of %s could not be delagated! Trying next time." % self.user)
         self.logger.info('Transfers completed')
         return
 
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
     def source_destinations_by_user(self):
         """
         Get all the destinations for a user
@@ -206,9 +235,15 @@ class TransferWorker:
                 # We could push applying the TFC into the list function, not sure if
                 # this would be faster, but might use up less memory. Probably more
                 # complicated, though.
+<<<<<<< Updated upstream
                 query = {'reduce':False,
                          'limit': self.config.max_files_per_transfer,
                          'key':[self.user, self.group, self.role, destination, source],
+=======
+                query = {'reduce': False,
+                         'limit': self.config.max_files_per_transfer,
+                         'key': [self.user, self.group, self.role, destination, source],
+>>>>>>> Stashed changes
                          'stale': 'ok'}
                 try:
                     active_files = self.db.loadView('AsyncTransfer', 'ftscp_all', query)['rows']
@@ -238,7 +273,7 @@ class TransferWorker:
                             # Prepare FTS Dashboard metadata
                             dash_report.append(dashboard_report)
                             new_job.append('%s %s' % (source_pfn, destination_pfn))
-                            self.logger.debug('FTS job created...')
+                            self.logger.debug('FTS job created... %s' % new_job)
                         else:
                             pass
                     else:
