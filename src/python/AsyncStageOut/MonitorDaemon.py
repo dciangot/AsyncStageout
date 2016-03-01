@@ -101,7 +101,7 @@ class MonitorDaemon(BaseWorkerThread):
                                % user)
             if len(files) > 0:
                 files = files[:self.max_jobs_per_user]
-                for split in range(0, len(files)//self.jobs_per_thread-1):
+                for split in range(0, len(files)//self.jobs_per_thread):
                     user_s = user+'/%s' % split
                     files = files[split*self.jobs_per_thread:(split+1)*self.jobs_per_thread]
                     if user_s not in current_running:
