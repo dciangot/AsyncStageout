@@ -68,7 +68,7 @@ class TransferWorker:
         self.role = user[2]
         self.tfc_map = tfc_map
         self.config = config
-        self.dropbox_dir = '%s/dropbox/outputs/%s' % (self.user, self.config.componentDir)
+        self.dropbox_dir = '%s/dropbox/outputs/%s' % (self.config.componentDir, self.user)
         logging.basicConfig(level=config.log_level)
         self.logger = logging.getLogger('AsyncTransfer-Worker-%s' % self.user)
         formatter = getCommonLogFormatter(self.config)
