@@ -74,11 +74,18 @@ class TransferDaemon(BaseDaemon):
             try:
                 os.makedirs(self.dropbox_dir)
             except OSError as e:
-                if e.errno == errno.EEXIST:
-                    pass
-                else:
-                    self.logger.error('Unknown error in mkdir' % e.errno)
+                if not e.errno == errno.EEXIST:
+                    self.logger.exception('Unknown error in mkdir' % e.errno)
                     raise
+
+        if not os.path.isdir("/tmp/DashboardReport"):
+            try:
+                os.makedirs("/tmp/DashboardReport")
+            except OSError as e:
+                if not e.errno == errno.EEXIST:
+                    self.logger.exception('Unknown error in mkdir' % e.errno)
+                    raise
+
         server = CouchServer(dburl=self.config.couch_instance, ckey=self.config.opsProxy, cert=self.config.opsProxy)
         self.db = server.connectDatabase(self.config.files_database)
         config_server = CouchServer(dburl=self.config.config_couch_instance)
@@ -147,21 +154,17 @@ class TransferDaemon(BaseDaemon):
             self.logger.exception('A problem occured when contacting couchDB: %s' % e)
             return []
 
-        active_users = []
-        if len(users['rows']) <= self.config.pool_size:
-            active_users = users['rows']
-            def keys_map(inputDict):
-                """
-                Map function.
-                """
-                return inputDict['key']
-            active_users = map(keys_map, active_users)
-        else:
-            sorted_users = self.factory.loadObject(self.config.algoName, args = [self.config, self.logger, users['rows'], self.config.pool_size], getFromCache = False, listFlag = True)
-            #active_users = random.sample(users['rows'], self.config.pool_size)
-            active_users = sorted_users()[:self.config.pool_size]
-        self.logger.info('%s active users' % len(active_users))
-        self.logger.debug('Active users are: %s' % active_users)
+        active_users = [ x['key'] for x in users['rows'] ]
+
+        self.logger.info('Requested %s active users' % len(active_users))
+        self.logger.debug('Requested active users are: %s' % active_users)
+    
+        if not len(active_users) <= self.config.pool_size:
+            active_users = active_users[:self.config.pool_size]
+            
+        self.logger.info('Selecting %s active users' % len(active_users))
+        self.logger.debug('Selected active users are: %s' % active_users)
+        
         return active_users
 
     def active_sites(self):
