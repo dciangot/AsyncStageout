@@ -1,4 +1,4 @@
-import datetime
+
 
 class TransferWrapper:
 
@@ -15,11 +15,9 @@ class TransferWrapper:
         __call__ method and code is executed here to process each one. To transfer
         data userProxy is needed. for some protocole destSite is needed.
         """
-        start_time = str(datetime.datetime.now())
         transferred, failed, allFiles = self.command(files, userProxy, destSite)
         msg = "from %s files, %s files are transferred, %s files failed to transfer"
         self.logger.info(msg % (len(allFiles), len(transferred), len(failed)))
-        end_time = str(datetime.datetime.now())
         self.mark_good(transferred)
         self.mark_failed(failed)
         return

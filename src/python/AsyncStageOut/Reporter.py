@@ -4,9 +4,6 @@ Checks for files to transfer
 """
 from WMCore.Agent.Harness import Harness
 from AsyncStageOut.ReporterDaemon import ReporterDaemon
-from AsyncStageOut import execute_command
-import os, errno
-import time, datetime
 import logging
 import threading
 

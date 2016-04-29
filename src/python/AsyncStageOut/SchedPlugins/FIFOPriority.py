@@ -6,8 +6,6 @@ Scheduling algo.
 """
 from AsyncStageOut.SchedPlugins.Algo import Algo
 import time
-import datetime
-import logging
 
 def fifo_algo(user_by_start):
     """

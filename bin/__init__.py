@@ -52,13 +52,13 @@ def getDNFromUserName(username, log, ckey = None, cert = None):
     dn = ''
     site_db = SiteDBJSON(config={'key': ckey, 'cert': cert})
     try:
-        dn = site_db.userNameDn(username)
+       dn = site_db.userNameDn(username)
     except IndexError:
-        log.error("user does not exist")
-        return dn
+       log.error("user does not exist")
+       return dn
     except RuntimeError:
-        log.error("SiteDB URL cannot be accessed")
-        return dn
+       log.error("SiteDB URL cannot be accessed")
+       return dn
     return dn
 
 def getProxy(defaultDelegation, log):

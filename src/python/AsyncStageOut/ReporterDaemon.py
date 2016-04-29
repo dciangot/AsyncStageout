@@ -9,6 +9,7 @@ Here's the algorithm
 """
 import os
 import logging
+import errno
 from multiprocessing import Pool
 
 from WMCore.WMFactory import WMFactory
@@ -26,18 +27,18 @@ def reporter(user, config):
     logging.debug("Trying to start the reporter worker")
     try:
         worker = ReporterWorker(user, config)
-    except Exception, e:
+    except Exception as e:
         logging.debug("Reporter Worker cannot be created!:" %e)
         return user
     if worker.init:
         logging.debug("Starting %s" % worker)
         try:
             worker()
-        except Exception, e:
+        except Exception as e:
             logging.debug("Reporter Worker cannot start!:" %e)
             return user
     else:
-       logging.debug("Worker cannot be initialized!")
+        logging.debug("Worker cannot be initialized!")
     return user
 
 def log_result(result):
@@ -66,7 +67,7 @@ class ReporterDaemon(BaseDaemon):
         if not os.path.isdir(self.dropbox_dir):
             try:
                 os.makedirs(self.dropbox_dir)
-            except OSError, e:
+            except OSError as e:
                 if e.errno == errno.EEXIST:
                     pass
                 else:

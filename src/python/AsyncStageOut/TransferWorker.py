@@ -176,8 +176,8 @@ class TransferWorker:
         Get all the destinations for a user
         """
         query = {'group': True,
-                 'startkey':[self.user, self.group, self.role], 'endkey':[self.user, self.group, self.role, {}, {}]}
-                 #'stale': 'ok'}
+                'startkey':[self.user, self.group, self.role], 'endkey':[self.user, self.group, self.role, {}, {}]}
+                #'stale': 'ok'}
         try:
             sites = self.db.loadView(self.config.ftscp_design, 'ftscp_all', query)
         except:
@@ -196,7 +196,6 @@ class TransferWorker:
         jobs_lfn = {}
         jobs_pfn = {}
         jobs_report = {}
-        failed_files = []
         self.logger.info('%s has %s links to transfer on: %s' % (self.user, len(source_dests), str(source_dests)))
         try:
             for (source, destination) in source_dests:
@@ -301,7 +300,6 @@ class TransferWorker:
         failure_reasons = []
         for link, copyjob in jobs.items():
             submission_error = False
-            status_error = False
             fts_job = {}
             # Validate copyjob file before doing anything
             self.logger.debug("Valid %s" % self.validate_copyjob(copyjob))
@@ -323,7 +321,6 @@ class TransferWorker:
                         "files":[]
                 }
 
-            pairs = []
             for SrcDest in copyjob:
                 tempDict = {"sources": [], "metadata": None, "destinations": []}
 
