@@ -116,18 +116,20 @@ class MonitorWorker:
                 defaultDelegation['server_key'] = self.config.serviceKey
 
         self.logger.debug('cache: %s' %self.config.cache_area)
-        self.valid = False
-        proxy=''
-        try:
+#        self.valid = False
+#        proxy=''
+#        try:
+#
+#            self.valid, proxy = getProxy(self.userDN, "", "", defaultDelegation, self.logger)
+	self.valid = True
+	proxy='/data/srv/asyncstageout/state/asyncstageout/creds/OpsProxy'
 
-            self.valid, proxy = getProxy(self.userDN, "", "", defaultDelegation, self.logger)
-
-        except Exception as ex:
-
-            msg = "Error getting the user proxy"
-            msg += str(ex)
-            msg += str(traceback.format_exc())
-            self.logger.error(msg)
+#        except Exception as ex:
+#
+#            msg = "Error getting the user proxy"
+#            msg += str(ex)
+#            msg += str(traceback.format_exc())
+#            self.logger.error(msg)
 
         if self.valid:
             self.userProxy = proxy

@@ -101,8 +101,9 @@ class MonitorDaemon(BaseWorkerThread):
                                % user)
             if len(files) > 0:
                 files_ = files[:self.config.max_jobs_per_user]
-		self.logger.debug('Split numbers: %s. files: %s' % (len(files)//self.config.jobs_per_thread, files))
-                for split in range(0, len(files)//self.config.jobs_per_thread):
+		self.logger.debug('Split numbers: %s. files: %s' % (len(files)//self.config.jobs_per_thread+1, files))
+		
+                for split in range(0, len(files)//self.config.jobs_per_thread+1):
                     user_s = user+'/%s' % split
 		    self.logger.debug('Split from: %s to %s' % (split*self.config.jobs_per_thread,(split+1)*self.config.jobs_per_thread))	
 		    start_ = split*self.config.jobs_per_thread
