@@ -1,5 +1,4 @@
-#pylint: disable=C0103,W0105
-
+#pylint: disable=C0103,W0105,W0703,W1201,W0141
 """
 Here's the algorithm
 
@@ -8,13 +7,15 @@ Here's the algorithm
 3. get active sites and build up a dictionary of TFC's
 4. create a multiprocessing Pool of size N
 5. spawn a process per user that
-    a. makes the ftscp copyjob
-    b. submits ftscp
-    c. deletes successfully transferred files
+    a. makes rest copyjob
+    b. submits to FTS
 """
 import os
 import logging
 from multiprocessing import Pool
+
+from RESTInteractions import HTTPRequests
+from ServerUtilities import encodeRequest, oracleOutputMapping
 
 from WMCore.WMFactory import WMFactory
 from WMCore.Database.CMSCouch import CouchServer
@@ -47,7 +48,7 @@ def ftscp(user, tfc_map, config):
             logging.debug("Worker cannot start!:" %e)
             return user
     else:
-        logging.debug("Worker cannot be initialized!")
+        loggingretryTransfers.debug("Worker cannot be initialized!")
     return user
 
 def log_result(result):
@@ -64,7 +65,11 @@ class TransferDaemon(BaseDaemon):
     """
     def __init__(self, config):
         """
-        Initialise class members
+        Initialise class members:
+            1. check and create dropbox dir
+            2. define oracle and couch (config and file instance) server connection
+            3. PhEDEx connection
+            4. Setup wmcore factory
         """
         #Need a better way to test this without turning off this next line
         BaseDaemon.__init__(self, config, 'AsyncTransfer')
@@ -79,48 +84,64 @@ class TransferDaemon(BaseDaemon):
                 else:
                     self.logger.error('Unknown error in mkdir' % e.errno)
                     raise
-        server = CouchServer(dburl=self.config.couch_instance, ckey=self.config.opsProxy, cert=self.config.opsProxy)
+
+        self.oracleDB = HTTPRequests(self.config.oracleDB,
+                                     self.config.opsProxy,
+                                     self.config.opsProxy)
+
+        server = CouchServer(dburl=self.config.couch_instance,
+                             ckey=self.config.opsProxy,
+                             cert=self.config.opsProxy)
         self.db = server.connectDatabase(self.config.files_database)
-        config_server = CouchServer(dburl=self.config.config_couch_instance)
-        self.config_db = config_server.connectDatabase(self.config.config_database)
+        cfg_server = CouchServer(dburl=self.config.config_couch_instance)
+        self.config_db = cfg_server.connectDatabase(self.config.config_database)
         self.logger.debug('Connected to CouchDB')
         self.pool = Pool(processes=self.config.pool_size)
         try:
-            self.phedex = PhEDEx(responseType='xml', dict = {'key': self.config.opsProxy, 'cert': self.config.opsProxy})
+            self.phedex = PhEDEx(responseType='xml',
+                                 dict={'key':self.config.opsProxy,
+                                       'cert':self.config.opsProxy})
         except Exception as e:
             self.logger.exception('PhEDEx exception: %s' % e)
         # Set up a factory for loading plugins
-        self.factory = WMFactory(self.config.schedAlgoDir, namespace = self.config.schedAlgoDir)
+        self.factory = WMFactory(self.config.schedAlgoDir,
+                                 namespace=self.config.schedAlgoDir)
 
-        result_list = []
-        current_running = []
 
     # Over riding setup() is optional, and not needed here
-    def algorithm(self, parameters = None):
+    def algorithm(self, parameters=None):
         """
-        1. Get a list of users with files to transfer from the couchdb instance
-        2. For each user get a suitably sized input for ftscp (call to a list)
-        3. Submit the ftscp to a subprocess
+        1  Get transfer config from couchdb config instance 
+        2. Get a list of users with files to transfer from the db instance 
+                                                    (oracle or couch, by config flag)
+        3. For each user get a suitably sized input for submission (call to a list)
+        4. Submit to a subprocess
         """
         query = {'stale':'ok'}
         try:
-            params = self.config_db.loadView('asynctransfer_config', 'GetTransferConfig', query)
+            params = self.config_db.loadView('asynctransfer_config',
+                                             'GetTransferConfig', query)
             self.config.max_files_per_transfer = params['rows'][0]['key'][1]
             self.config.algoName = params['rows'][0]['key'][2]
         except IndexError:
-            self.logger.exception('Config data could not be retrieved from the config database. Fallback to the config file')
+            self.logger.exception('Config data could not be retrieved from \
+                                  the config database. \
+                                  Fallback to the config file')
         except Exception as e:
-            self.logger.exception('A problem occured when contacting couchDB: %s' % e)
+            self.logger.exception('A problem occured \
+                                  when contacting couchDB: %s' % e)
 
-        users = self.active_users(self.db)
+        if self.config.isOracle:
+            sites, users = self.oracleSiteUser(self.oracleDB)
+        else:
+            users = self.active_users(self.db)
 
-        sites = self.active_sites()
-        self.logger.info('%s active sites' % len(sites))
-        self.logger.debug('Active sites are: %s' % sites)
+            sites = self.active_sites()
+            self.logger.info('%s active sites' % len(sites))
+            self.logger.debug('Active sites are: %s' % sites)
 
         site_tfc_map = {}
         for site in sites:
-            # TODO: Remove this check once the ASO request will be validated before the upload.
             if site and str(site) != 'None' and str(site) != 'unknown':
                 site_tfc_map[site] = self.get_tfc_rules(site)
         self.logger.debug('kicking off pool')
@@ -130,41 +151,100 @@ class TransferDaemon(BaseDaemon):
                 self.logger.debug('processing %s' %u)
                 current_running.append(u)
                 self.logger.debug('processing %s' %current_running)
-                self.pool.apply_async(ftscp,(u, site_tfc_map, self.config), callback = log_result)
+                self.pool.apply_async(ftscp, (u, site_tfc_map, self.config),
+                                      callback=log_result)
+
+    def oracleSiteUser(self, db):
+        """
+        1. Acquire transfers from DB
+        2. Get acquired users and destination sites
+        """
+        fileDoc = {}
+        fileDoc['asoworker'] = self.config.asoworker
+        fileDoc['subresource'] = 'acquireTransfers'
+
+        self.logger.debug("Retrieving transfers from oracleDB")
+
+        try:
+            result = db.post(self.config.oracleFileTrans,
+                             data=encodeRequest(fileDoc))
+        except Exception as ex:
+            self.logger.error("Failed to acquire transfers \
+                              from oracleDB: %s" %ex)
+
+        fileDoc = {}
+        fileDoc['asoworker'] = self.config.asoworker
+        fileDoc['subresource'] = 'acquiredTransfers'
+        fileDoc['grouping'] = 0
+
+        self.logger.debug("Retrieving users from oracleDB")
+
+        try:
+            results = db.get(self.config.oracleFileTrans,
+                             data=encodeRequest(fileDoc))
+        except Exception as ex:
+            self.logger.error("Failed to get acquired transfers \
+                              from oracleDB: %s" %ex)
+
+        result = oracleOutputMapping(results)
+        if len(result) <= self.config.pool_size:
+            def user_map(inputDict):
+                """
+                map user
+                """
+                outDict = [inputDict['username'], inputDict['user_group'],
+                           inputDict['user_role'],
+                           inputDict['destination'], inputDict['source']]
+                return outDict
+
+            active_users = map(user_map, result)
+
+        else:
+            sorted_users = self.factory.loadObject(self.config.algoName,
+                                                   args=[self.config,
+                                                         self.logger,
+                                                         result['result'],
+                                                         self.config.pool_size],
+                                                   getFromCache=False,
+                                                   listFlag=True)
+            active_users = sorted_users()[:self.config.pool_size]
+        self.logger.info('%s active users' % len(active_users))
+        self.logger.debug('Active users are: %s' % active_users)
+
+        active_sites = [x['destination'] for x in result]
+
+        return list(set(active_sites)), active_users
 
     def active_users(self, db):
         """
-        Query a view for users with files to transfer. Get this from the
-        following view:
-            ftscp?group=true&group_level=1
+        Query a view for users with files to transfer.
+        get this from the following view:
+              ftscp?group=true&group_level=1
         """
-        #TODO: Remove stale=ok for now until tested
-        #query = {'group': True, 'group_level': 3, 'stale': 'ok'}
         query = {'group': True, 'group_level': 3}
         try:
             users = db.loadView(self.config.ftscp_design, 'ftscp_all', query)
         except Exception as e:
-            self.logger.exception('A problem occured when contacting couchDB: %s' % e)
+            self.logger.exception('A problem occured when\
+                                  contacting couchDB: %s' % e)
             return []
 
-        active_users = []
         if len(users['rows']) <= self.config.pool_size:
-            active_users = users['rows']
-            def keys_map(inputDict):
-                """
-                Map function.
-                """
-                return inputDict['key']
-            active_users = map(keys_map, active_users)
+            active_users = [x['key'] for x in users['rows']]
         else:
-            sorted_users = self.factory.loadObject(self.config.algoName, args = [self.config, self.logger, users['rows'], self.config.pool_size], getFromCache = False, listFlag = True)
-            #active_users = random.sample(users['rows'], self.config.pool_size)
+            sorted_users = self.factory.loadObject(self.config.algoName,
+                                                   args=[self.config,
+                                                         self.logger,
+                                                         users['rows'],
+                                                         self.config.pool_size],
+                                                   getFromCache=False,
+                                                   listFlag=True)
             active_users = sorted_users()[:self.config.pool_size]
         self.logger.info('%s active users' % len(active_users))
         self.logger.debug('Active users are: %s' % active_users)
         return active_users
 
-    def active_sites(self):
+    def  active_sites(self):
         """
         Get a list of all sites involved in transfers.
         """
@@ -172,7 +252,8 @@ class TransferDaemon(BaseDaemon):
         try:
             sites = self.db.loadView('AsyncTransfer', 'sites', query)
         except Exception as e:
-            self.logger.exception('A problem occured when contacting couchDB: %s' % e)
+            self.logger.exception('A problem occured \
+                                  when contacting couchDB: %s' % e)
             return []
 
         def keys_map(inputDict):
@@ -181,7 +262,7 @@ class TransferDaemon(BaseDaemon):
             """
             return inputDict['key']
 
-        return map(keys_map, sites['rows'])
+        return list(set(map(keys_map, sites['rows'])))
 
     def get_tfc_rules(self, site):
         """
@@ -193,12 +274,13 @@ class TransferDaemon(BaseDaemon):
         except Exception as e:
             self.logger.exception('PhEDEx exception: %s' % e)
         try:
-            tfc_file = self.phedex.cacheFileName('tfc', inputdata={'node': site})
+            tfc_file = self.phedex.cacheFileName('tfc',
+                                                 inputdata={'node': site})
         except Exception as e:
             self.logger.exception('PhEDEx cache exception: %s' % e)
         return readTFC(tfc_file)
 
-    def terminate(self, parameters = None):
+    def terminate(self, parameters=None):
         """
         Called when thread is being terminated.
         """

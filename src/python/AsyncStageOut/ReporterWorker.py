@@ -28,6 +28,10 @@ from AsyncStageOut import getHashLfn
 from AsyncStageOut import getDNFromUserName
 from AsyncStageOut import getCommonLogFormatter
 
+from RESTInteractions import HTTPRequests
+from ServerUtilities import getHashLfn, generateTaskName,\
+        PUBLICATIONDB_STATUSES, encodeRequest, oracleOutputMapping
+
 def getProxy(userdn, group, role, defaultDelegation, logger):
     """
     _getProxy_
@@ -108,11 +112,8 @@ class ReporterWorker:
 
         self.valid = False
         try:
-
             self.valid, proxy = getProxy(self.userDN, "", "", defaultDelegation, self.logger)
-
         except Exception, ex:
-
             msg = "Error getting the user proxy"
             msg += str(ex)
             msg += str(traceback.format_exc())
@@ -126,6 +127,14 @@ class ReporterWorker:
             self.logger.error('Did not get valid proxy. Setting proxy to ops proxy')
             self.userProxy = config.opsProxy
 
+
+        try:
+            self.oracleDB = HTTPRequests(self.config.oracleDB,
+                                  config.opsProxy,
+                                  config.opsProxy)
+        except Exception as ex:
+            self.logger.error("%s" %ex)
+            raise
         # Set up a factory for loading plugins
         self.factory = WMFactory(self.config.pluginDir, namespace = self.config.pluginDir)
         self.commandTimeout = 1200
@@ -235,45 +244,58 @@ class ReporterWorker:
             hash_lfn = getHashLfn(lfn)
             self.logger.info("Marking good %s" % hash_lfn)
             self.logger.debug("Marking good %s" % lfn)
+            if not self.config.isOracle:
+                try:
+                    document = self.db.document(hash_lfn)
+                except Exception, ex:
+                    msg = "Error loading document from couch"
+                    msg += str(ex)
+                    msg += str(traceback.format_exc())
+                    self.logger.error(msg)
+                    continue
+            self.logger.info("Doc %s Loaded" % hash_lfn)
             try:
-                document = self.db.document(hash_lfn)
+                now = str(datetime.datetime.now())
+                last_update = time.time()
+                if self.config.isOracle:
+                    #TODO: there still need to change lfn here? + check on states
+                    data = {}
+                    data['asoworker'] = self.config.asoworker
+                    data['subresource'] = 'updateTransfers'
+                    data['list_of_ids'] = getHashLfn(lfn)
+                    data['list_of_transfer_state'] = "DONE"
+                    result = self.oracleDB.post('/crabserver/dev/filetransfers',
+                                         data=encodeRequest(data))
+                    updated_lfn.append(lfn)
+                    self.logger.debug("Marked good %s" % lfn)
+                else:
+                    if document['state'] != 'killed' and document['state'] != 'done' and document['state'] != 'failed':
+                        outputLfn = document['lfn'].replace('store/temp', 'store', 1)
+                        data = {}
+                        data['end_time'] = now
+                        data['state'] = 'done'
+                        data['lfn'] = outputLfn
+                        data['last_update'] = last_update
+                        updateUri = "/" + self.db.name + "/_design/AsyncTransfer/_update/updateJobs/" + getHashLfn(lfn)
+                        updateUri += "?" + urllib.urlencode(data)
+                        self.db.makeRequest(uri = updateUri, type = "PUT", decode = False)
+                        updated_lfn.append(lfn)
+                        self.logger.debug("Marked good %s" % lfn)
+                    else: updated_lfn.append(lfn)
             except Exception, ex:
-                msg = "Error loading document from couch"
+                msg = "Error updating document"
                 msg += str(ex)
                 msg += str(traceback.format_exc())
                 self.logger.error(msg)
                 continue
-            self.logger.info("Doc %s Loaded" % hash_lfn)
-            if document['state'] != 'killed' and document['state'] != 'done' and document['state'] != 'failed':
-                outputLfn = document['lfn'].replace('store/temp', 'store', 1)
-                try:
-                    now = str(datetime.datetime.now())
-                    last_update = time.time()
-                    data = {}
-                    data['end_time'] = now
-                    data['state'] = 'done'
-                    data['lfn'] = outputLfn
-                    data['last_update'] = last_update
-                    updateUri = "/" + self.db.name + "/_design/AsyncTransfer/_update/updateJobs/" + getHashLfn(lfn)
-                    updateUri += "?" + urllib.urlencode(data)
-                    self.db.makeRequest(uri = updateUri, type = "PUT", decode = False)
-                    updated_lfn.append(lfn)
-                    self.logger.debug("Marked good %s" % lfn)
-                except Exception, ex:
-                    msg = "Error updating document in couch"
-                    msg += str(ex)
-                    msg += str(traceback.format_exc())
-                    self.logger.error(msg)
-                    continue
-                try:
-                    self.db.commit()
-                except Exception, ex:
-                    msg = "Error commiting documents in couch"
-                    msg += str(ex)
-                    msg += str(traceback.format_exc())
-                    self.logger.error(msg)
-                    continue
-            else: updated_lfn.append(lfn)
+            try:
+                self.db.commit()
+            except Exception, ex:
+                msg = "Error commiting documents in couch"
+                msg += str(ex)
+                msg += str(traceback.format_exc())
+                self.logger.error(msg)
+                continue
         self.logger.debug("transferred file updated")
         return updated_lfn
 
@@ -296,58 +318,89 @@ class ReporterWorker:
                     temp_lfn = lfn['value']
             docId = getHashLfn(temp_lfn)
             # Load document to get the retry_count
-            try:
-                document = self.db.document( docId )
-            except Exception, ex:
-                msg = "Error loading document from couch"
-                msg += str(ex)
-                msg += str(traceback.format_exc())
-                self.logger.error(msg)
-                continue
-            if document['state'] != 'killed' and document['state'] != 'done' and document['state'] != 'failed':
-                now = str(datetime.datetime.now())
-                last_update = time.time()
-                # Prepare data to update the document in couch
-                if force_fail or len(document['retry_count']) + 1 > self.max_retry:
-                    data['state'] = 'failed'
-                    data['end_time'] = now
-                else:
-                    data['state'] = 'retry'
-                    fatal_error = self.determine_fatal_error(failures_reasons[files.index(lfn)])
-                    if fatal_error:
+            if self.config.isOracle:
+                try:
+                    docbyId = self.oracleDB.get('/crabserver/dev/fileusertransfers',
+                                                data=encodeRequest({'subresource': 'getById', 'id': docId}))
+                    document = oracleOutputMapping(docbyId, None)[0]
+                    self.logger.debug("Document: %s" % document)
+                    data = {}
+                    data['asoworker'] = self.config.asoworker
+                    data['subresource'] = 'updateTransfers'
+                    data['list_of_ids'] = docId
+
+                    if force_fail or document['transfer_retry_count'] > self.max_retry:
+                        data['list_of_transfer_state'] = 'FAILED'
+                        data['list_of_retry_value'] = 1
+                    else:
+                        data['list_of_transfer_state'] = 'RETRY'
+                        fatal_error = self.determine_fatal_error(failures_reasons[files.index(lfn)])
+                        if fatal_error:
+                            data['list_of_transfer_state'] = 'FAILED'
+                    data['list_of_failure_reason'] = failures_reasons[files.index(lfn)]
+                    data['list_of_retry_value'] = 1
+
+                    self.logger.debug("update: %s" % data)
+                    result = self.oracleDB.post('/crabserver/dev/filetransfers',
+                                         data=encodeRequest(data))
+                    updated_lfn.append(lfn)
+                    self.logger.debug("Marked failed %s" % lfn)
+                except Exception as ex:
+                    self.logger.error("Error updating document status: %s" %ex)
+                    continue
+            else:
+                try:
+                    document = self.db.document( docId )
+                except Exception, ex:
+                    msg = "Error loading document from couch"
+                    msg += str(ex)
+                    msg += str(traceback.format_exc())
+                    self.logger.error(msg)
+                    continue
+                if document['state'] != 'killed' and document['state'] != 'done' and document['state'] != 'failed':
+                    now = str(datetime.datetime.now())
+                    last_update = time.time()
+                    # Prepare data to update the document in couch
+                    if force_fail or len(document['retry_count']) + 1 > self.max_retry:
                         data['state'] = 'failed'
                         data['end_time'] = now
+                    else:
+                        data['state'] = 'retry'
+                        fatal_error = self.determine_fatal_error(failures_reasons[files.index(lfn)])
+                        if fatal_error:
+                            data['state'] = 'failed'
+                            data['end_time'] = now
 
-                self.logger.debug("Failure list: %s" % failures_reasons)
-                self.logger.debug("Files: %s" % files)
-                self.logger.debug("LFN %s" % lfn)
+                    self.logger.debug("Failure list: %s" % failures_reasons)
+                    self.logger.debug("Files: %s" % files)
+                    self.logger.debug("LFN %s" % lfn)
 
-                data['failure_reason'] = failures_reasons[files.index(lfn)]
-                data['last_update'] = last_update
-                data['retry'] = now
-                # Update the document in couch
-                self.logger.debug("Marking failed %s" % docId)
-                try:
-                    updateUri = "/" + self.db.name + "/_design/AsyncTransfer/_update/updateJobs/" + docId
-                    updateUri += "?" + urllib.urlencode(data)
-                    self.db.makeRequest(uri = updateUri, type = "PUT", decode = False)
-                    updated_lfn.append(docId)
-                    self.logger.debug("Marked failed %s" % docId)
-                except Exception, ex:
-                    msg = "Error in updating document in couch"
-                    msg += str(ex)
-                    msg += str(traceback.format_exc())
-                    self.logger.error(msg)
-                    continue
-                try:
-                    self.db.commit()
-                except Exception, ex:
-                    msg = "Error commiting documents in couch"
-                    msg += str(ex)
-                    msg += str(traceback.format_exc())
-                    self.logger.error(msg)
-                    continue
-            else: updated_lfn.append(docId)
+                    data['failure_reason'] = failures_reasons[files.index(lfn)]
+                    data['last_update'] = last_update
+                    data['retry'] = now
+                    # Update the document in couch
+                    self.logger.debug("Marking failed %s" % docId)
+                    try:
+                        updateUri = "/" + self.db.name + "/_design/AsyncTransfer/_update/updateJobs/" + docId
+                        updateUri += "?" + urllib.urlencode(data)
+                        self.db.makeRequest(uri = updateUri, type = "PUT", decode = False)
+                        updated_lfn.append(docId)
+                        self.logger.debug("Marked failed %s" % docId)
+                    except Exception, ex:
+                        msg = "Error in updating document in couch"
+                        msg += str(ex)
+                        msg += str(traceback.format_exc())
+                        self.logger.error(msg)
+                        continue
+                    try:
+                        self.db.commit()
+                    except Exception, ex:
+                        msg = "Error commiting documents in couch"
+                        msg += str(ex)
+                        msg += str(traceback.format_exc())
+                        self.logger.error(msg)
+                        continue
+                else: updated_lfn.append(docId)
         self.logger.debug("failed file updated")
         return updated_lfn
 

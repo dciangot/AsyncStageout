@@ -1,12 +1,14 @@
 #!/usr/bin/env
+#pylint: disable=C0103,W0105,broad-except,logging-not-lazy,bad-builtin
 '''
 The TransferWorker does the following:
 
-a. make the ftscp copyjob
-b. submit ftscp and watch
-c. delete successfully transferred files from the database
+a. create REST FTS jobs to be submitted
+b. submit FTS jobs and create dashboard report
+c. update state in the db (couch or oracle, by aso config flag)
+d. create json in dropbox folder for FTS monitor
 
-There should be one worker per user transfer.
+There should be one worker per user.
 '''
 import os
 import re
@@ -28,6 +30,10 @@ from AsyncStageOut import getHashLfn
 from AsyncStageOut import getFTServer
 from AsyncStageOut import getDNFromUserName
 from AsyncStageOut import getCommonLogFormatter
+
+from RESTInteractions import HTTPRequests
+from ServerUtilities import getHashLfn, generateTaskName,\
+        PUBLICATIONDB_STATUSES, encodeRequest, oracleOutputMapping
 
 def execute_command(command, logger, timeout):
     """
@@ -52,14 +58,17 @@ def execute_command(command, logger, timeout):
         time.sleep(0.1)
     stdout, stderr = proc.communicate()
     rc = proc.returncode
-    logger.debug('Executing : \n command : %s\n output : %s\n error: %s\n retcode : %s' % (command, stdout, stderr, rc))
+    logger.debug('Executing : \n command : %s\n output : %s\n \
+                 error: %s\n retcode : %s' % (command, stdout, stderr, rc))
     return stdout, rc
 
 class TransferWorker:
-
+    """
+    Submit user transfers to FTS
+    """
     def __init__(self, user, tfc_map, config):
         """
-        store the user and tfc the worker
+        store the user transfer info and retrieve user proxy.
         """
         self.user = user[0]
         self.group = user[1]
@@ -112,30 +121,35 @@ class TransferWorker:
         self.config_db = config_server.connectDatabase(self.config.config_database)
         self.fts_server_for_transfer = getFTServer("T1_UK_RAL", 'getRunningFTSserver', self.config_db, self.logger)
 
+        self.oracleDB = HTTPRequests(self.config.oracleDB,
+                              self.config.opsProxy,
+                              self.config.opsProxy)
+
         self.cache_area=""
         if hasattr(self.config, "cache_area"):
             self.cache_area = self.config.cache_area
-        query = {'key':self.user}
-        try:
-            self.user_cache_area = self.db.loadView('DBSPublisher', 'cache_area', query)['rows']
-            self.cache_area = "https://"+self.user_cache_area[0]['value'][0]+self.user_cache_area[0]['value'][1]+"/filemetadata"
-        except Exception as ex:
-            msg = "Error getting user cache_area."
-            msg += str(ex)
-            msg += str(traceback.format_exc())
-            self.logger.error(msg)
-            pass
+        if not self.config.isOracle:
+            query = {'key':self.user}
+
+            try:
+                self.user_cache_area = self.db.loadView('DBSPublisher', 'cache_area', query)['rows']
+                self.cache_area = "https://"+self.user_cache_area[0]['value'][0]+self.user_cache_area[0]['value'][1]+"/filemetadata"
+            except Exception as ex:
+                msg = "Error getting user cache_area."
+                msg += str(ex)
+                msg += str(traceback.format_exc())
+                self.logger.error(msg)
+                pass
         try:
             defaultDelegation['myproxyAccount'] = re.compile('https?://([^/]*)/.*').findall(self.cache_area)[0]
         except IndexError:
             self.logger.error('MyproxyAccount parameter cannot be retrieved from %s . ' % (self.config.cache_area))
-            
         if getattr(self.config, 'serviceCert', None):
             defaultDelegation['server_cert'] = self.config.serviceCert
         if getattr(self.config, 'serviceKey', None):
             defaultDelegation['server_key'] = self.config.serviceKey
         self.valid_proxy = False
-        self.user_proxy = None
+        self.user_proxy = self.config.opsProxy
         try:
             defaultDelegation['userDN'] = self.userDN
             defaultDelegation['group'] = self.group
@@ -147,11 +161,12 @@ class TransferWorker:
             msg += str(traceback.format_exc())
             self.logger.error(msg)
 
+
     def __call__(self):
         """
-        a. makes the ftscp copyjob
-        b. submits ftscp
-        c. deletes successfully transferred files from the DB
+        a. makes the RESTFTS job
+        b. submits FTS
+        c. update status and create dropbox json
         """
         stdout, stderr, rc = None, None, 99999
         fts_url_delegation = self.fts_server_for_transfer.replace('8446', '8443')
@@ -175,23 +190,41 @@ class TransferWorker:
         """
         Get all the destinations for a user
         """
-        query = {'group': True,
-                 'startkey':[self.user, self.group, self.role], 'endkey':[self.user, self.group, self.role, {}, {}]}
-                 #'stale': 'ok'}
-        try:
-            sites = self.db.loadView(self.config.ftscp_design, 'ftscp_all', query)
-        except:
-            return []
-        def keys_map(dict):
-            return dict['key'][4], dict['key'][3]
-        return map(keys_map, sites['rows'])
+        if self.config.isOracle:
+            fileDoc = {}
+            fileDoc['asoworker'] = self.config.asoworker
+            fileDoc['subresource'] = 'acquiredTransfers'
+            fileDoc['grouping'] = 1
+            fileDoc['username'] = self.user
+            result = []
+            try:
+                results = self.oracleDB.get(self.config.oracleFileTrans,
+                                           data=encodeRequest(fileDoc))
+                result = oracleOutputMapping(results)
+                res = [[x['source'], x['destination']] for x in result]
+            except Exception as ex:
+                self.logger.error("Failed to get acquired transfers \
+                                  from oracleDB: %s" %ex)
+            return res, result
+        else:
+            query = {'group': True,
+                     'startkey':[self.user, self.group, self.role], 'endkey':[self.user, self.group, self.role, {}, {}]}
+                     #'stale': 'ok'}
+            try:
+                sites = self.db.loadView(self.config.ftscp_design, 'ftscp_all', query)
+            except:
+                return []
+            return [[x[4], x[3]] for x in sites['rows']]
 
     def files_for_transfer(self):
         """
         Process a queue of work per transfer source:destination for a user. Return one
-        ftscp copyjob per source:destination.
+        job per source:destination.
         """
-        source_dests = self.source_destinations_by_user()
+        if self.config.isOracle:
+            source_dests, docs = self.source_destinations_by_user()
+        else:
+            source_dests = self.source_destinations_by_user()
         jobs = {}
         jobs_lfn = {}
         jobs_pfn = {}
@@ -200,19 +233,47 @@ class TransferWorker:
         self.logger.info('%s has %s links to transfer on: %s' % (self.user, len(source_dests), str(source_dests)))
         try:
             for (source, destination) in source_dests:
-                # We could push applying the TFC into the list function, not sure if
-                # this would be faster, but might use up less memory. Probably more
-                # complicated, though.
-                query = {'reduce':False,
-                         'limit': self.config.max_files_per_transfer,
-                         'key':[self.user, self.group, self.role, destination, source],
-                         'stale': 'ok'}
-                try:
-                    active_files = self.db.loadView(self.config.ftscp_design, 'ftscp_all', query)['rows']
-                except:
-                    continue
-                self.logger.debug('%s has %s files to transfer from %s to %s' % (self.user, len(active_files),
-                                                                                 source, destination))
+                self.logger.info('%s %s' % (docs[0]['destination'],destination))
+                if self.config.isOracle:
+                    active_docs = [x for x in docs
+                                   if  x['destination']==destination
+                                   and x['source']==source
+                                   and x['username']==self.user
+                                   and x['user_group']==self.group
+                                   and x['user_role']==self.role
+                                  ]
+                    self.logger.info('%s' % active_docs)
+                    def map_active(inputdoc):
+                        """
+                        map active_users
+                        """
+                        outDict = {}
+                        outDict['key'] = [inputdoc['username'],
+                                          inputdoc['user_group'],
+                                          inputdoc['user_role'],
+                                          inputdoc['destination'],
+                                          inputdoc['source'],
+                                          inputdoc['id']]
+                        outDict['value'] = [inputdoc['destination_lfn'], inputdoc['source_lfn']]
+                        return outDict
+                    active_files = [map_active(x) for x in active_docs]
+                    self.logger.debug('%s has %s files to transfer \
+                                      from %s to %s' % (self.user,
+                                                        len(active_files),
+                                                        source,
+                                                        destination))
+                else:
+                    query = {'reduce':False,
+                             'limit': self.config.max_files_per_transfer,
+                             'key':[self.user, self.group,
+                                    self.role, destination, source],
+                             'stale': 'ok'}
+                    try:
+                        active_files = self.db.loadView(self.config.ftscp_design, 'ftscp_all', query)['rows']
+                    except:
+                        continue
+                    self.logger.debug('%s has %s files to transfer from %s to %s' % (self.user, len(active_files),
+                                                                                     source, destination))
                 new_job = []
                 lfn_list = []
                 pfn_list = []
@@ -225,8 +286,12 @@ class TransferWorker:
                     destination_pfn = self.apply_tfc_to_lfn('%s:%s' % (destination, item['value'][1]))
                     self.logger.debug('PFNs prepared...')
                     if source_pfn and destination_pfn and self.valid_proxy:
-                        acquired_file, dashboard_report = self.mark_acquired([item])
-                        self.logger.debug('Files have been marked acquired')
+                        try:
+                            acquired_file, dashboard_report = self.mark_acquired([item])
+                            self.logger.debug('Files have been marked acquired')
+                        except Exception as ex:
+                             self.logger.error("%s" % ex)
+                             raise
                         if acquired_file:
                             self.logger.debug('Starting FTS Job creation...')
                             # Prepare Monitor metadata
@@ -240,7 +305,7 @@ class TransferWorker:
                             pass
                     else:
                         self.mark_failed([item])
-                self.logger.debug('Preparing job...')
+                self.logger.debug('Preparing job... %s' % len(active_files))
                 map(tfc_map, active_files)
                 self.logger.debug('Job prepared...')
                 if new_job:
@@ -308,22 +373,21 @@ class TransferWorker:
             if not self.validate_copyjob(copyjob): continue
 
             rest_copyjob = {
-                        "params":{
-                                "bring_online": None,
-                                "verify_checksum": False,
-                                "copy_pin_lifetime": -1,
-                                "max_time_in_queue": self.config.max_h_in_queue,
-                                "job_metadata":{"issuer": "ASO"},
-                                "spacetoken": None,
-                                "source_spacetoken": None,
-                                "fail_nearline": False,
-                                "overwrite": True,
-                                "gridftp": None
-                        },
-                        "files":[]
+                "params":{
+                    "bring_online": None,
+                    "verify_checksum": False,
+                    "copy_pin_lifetime": -1,
+                    "max_time_in_queue": self.config.max_h_in_queue,
+                    "job_metadata":{"issuer": "ASO"},
+                    "spacetoken": None,
+                    "source_spacetoken": None,
+                    "fail_nearline": False,
+                    "overwrite": True,
+                    "gridftp": None
+                    },
+                "files":[]
                 }
 
-            pairs = []
             for SrcDest in copyjob:
                 tempDict = {"sources": [], "metadata": None, "destinations": []}
 
@@ -456,42 +520,68 @@ class TransferWorker:
         """
         lfn_in_transfer = []
         dash_rep = ()
-        for lfn in files:
-            if lfn['value'][0].find('temp') == 7:
-                docId = getHashLfn(lfn['value'][0])
-                self.logger.debug("Marking acquired %s" % docId)
-                # Load document to get the retry_count
-                try:
-                    document = self.db.document(docId)
-                except Exception as ex:
-                    msg = "Error loading document from couch"
-                    msg += str(ex)
-                    msg += str(traceback.format_exc())
-                    self.logger.error(msg)
-                    continue
-                if (document['state'] == 'new' or document['state'] == 'retry'):
-                    data = {}
-                    data['state'] = 'acquired'
-                    data['last_update'] = time.time()
-                    updateUri = "/" + self.db.name + "/_design/AsyncTransfer/_update/updateJobs/" + docId
-                    updateUri += "?" + urllib.urlencode(data)
+        if self.config.isOracle:
+            for lfn in files:
+                if lfn['value'][0].find('temp') == 7:
+                    docId = lfn['key'][5]
+                    self.logger.debug("Marking acquired %s" % docId)
                     try:
-                        self.db.makeRequest(uri=updateUri, type="PUT", decode=False)
+                        docbyId = self.oracleDB.get('/crabserver/dev/fileusertransfers',
+                                                    data=encodeRequest({'subresource': 'getById', 'id': docId}))
+                        document = oracleOutputMapping(docbyId, None)[0]
+                        fileDoc = {}
+                        fileDoc['asoworker'] = self.config.asoworker
+                        fileDoc['subresource'] = 'updateTransfers'
+                        fileDoc['list_of_ids'] = docId
+                        fileDoc['list_of_transfer_state'] = "SUBMITTED"
+
+                        result = self.oracleDB.post('/crabserver/dev/filetransfers',
+                                             data=encodeRequest(fileDoc))
                     except Exception as ex:
-                        msg = "Error updating document in couch"
+                        self.logger.error("Error during status update: %s" %ex)
+
+                    lfn_in_transfer.append(lfn)
+                    dash_rep = (document['jobid'], document['job_retry_count'], document['taskname'])
+                    self.logger.debug("Marked acquired %s of %s" % (docId, lfn))
+                    ## TODO: no need of mark good right? the postjob should updated the status in case of direct stageout I think
+                    return lfn_in_transfer, dash_rep
+        else:
+            for lfn in files:
+                if lfn['value'][0].find('temp') == 7:
+                    docId = getHashLfn(lfn['value'][0])
+                    self.logger.debug("Marking acquired %s" % docId)
+                    # Load document to get the retry_count
+                    try:
+                        document = self.db.document(docId)
+                    except Exception as ex:
+                        msg = "Error loading document from couch"
                         msg += str(ex)
                         msg += str(traceback.format_exc())
                         self.logger.error(msg)
                         continue
-                    self.logger.debug("Marked acquired %s of %s" % (docId, lfn))
-                    lfn_in_transfer.append(lfn)
-                    dash_rep = (document['jobid'], document['job_retry_count'], document['workflow'])
+                    if (document['state'] == 'new' or document['state'] == 'retry'):
+                        data = {}
+                        data['state'] = 'acquired'
+                        data['last_update'] = time.time()
+                        updateUri = "/" + self.db.name + "/_design/AsyncTransfer/_update/updateJobs/" + docId
+                        updateUri += "?" + urllib.urlencode(data)
+                        try:
+                            self.db.makeRequest(uri=updateUri, type="PUT", decode=False)
+                        except Exception as ex:
+                            msg = "Error updating document in couch"
+                            msg += str(ex)
+                            msg += str(traceback.format_exc())
+                            self.logger.error(msg)
+                            continue
+                        self.logger.debug("Marked acquired %s of %s" % (docId, lfn))
+                        lfn_in_transfer.append(lfn)
+                        dash_rep = (document['jobid'], document['job_retry_count'], document['workflow'])
+                    else:
+                        continue
                 else:
-                    continue
-            else:
-                good_lfn = lfn['value'][0].replace('store', 'store/temp', 1)
-                self.mark_good([good_lfn])
-        return lfn_in_transfer, dash_rep
+                    good_lfn = lfn['value'][0].replace('store', 'store/temp', 1)
+                    self.mark_good([good_lfn])
+            return lfn_in_transfer, dash_rep
 
     def mark_good(self, files=[]):
         """
@@ -553,58 +643,102 @@ class TransferWorker:
                 else:
                     temp_lfn = lfn['value'][0]
 
-            docId = getHashLfn(temp_lfn)
-
-            # Load document to get the retry_count
-            try:
-                document = self.db.document(docId)
-            except Exception as ex:
-                msg = "Error loading document from couch"
-                msg += str(ex)
-                msg += str(traceback.format_exc())
-                self.logger.error(msg)
-                continue
-            if document['state'] != 'killed' and document['state'] != 'done' and document['state'] != 'failed':
-                now = str(datetime.datetime.now())
-                last_update = time.time()
-                # Prepare data to update the document in couch
-                if force_fail or len(document['retry_count']) + 1 > self.max_retry:
-                    data['state'] = 'failed'
-                else:
-                    data['state'] = 'retry'
-                if submission_error:
-                    data['failure_reason'] = "Job could not be submitted to FTS: temporary problem of FTS"
-                elif not self.valid_proxy:
-                    data['failure_reason'] = "Job could not be submitted to FTS: user's proxy expired"
-                else:
-                    data['failure_reason'] = "Site config problem."
-                data['last_update'] = last_update
-                data['retry'] = now
-
-                # Update the document in couch
+            # Load document and get the retry_count
+            if self.config.isOracle:
+                docId = lfn['key'][5]
                 self.logger.debug("Marking failed %s" % docId)
                 try:
-                    updateUri = "/" + self.db.name + "/_design/AsyncTransfer/_update/updateJobs/" + docId
-                    updateUri += "?" + urllib.urlencode(data)
-                    self.db.makeRequest(uri=updateUri, type="PUT", decode=False)
-                    updated_lfn.append(docId)
-                    self.logger.debug("Marked failed %s" % docId)
+                    docbyId = self.oracleDB.get('/crabserver/dev/fileusertransfers',
+                                                data=encodeRequest({'subresource': 'getById', 'id': docId}))
                 except Exception as ex:
-                    msg = "Error in updating document in couch"
-                    msg += str(ex)
-                    msg += str(traceback.format_exc())
-                    self.logger.error(msg)
+                    self.logger.error("Error updating failed docs: %s" %ex)
                     continue
+                document = oracleOutputMapping(docbyId, None)[0]
+                self.logger.debug("Document: %s" % document)
+
+                fileDoc = {}
+                fileDoc['asoworker'] = 'asodciangot1'
+                fileDoc['subresource'] = 'updateTransfers'
+                fileDoc['list_of_ids'] = docId 
+
+                if force_fail or document['transfer_retry_count'] > self.max_retry:
+                    fileDoc['list_of_transfer_state'] = 'FAILED'
+                    fileDoc['list_of_retry_value'] = 1
+                else:
+                    fileDoc['list_of_transfer_state'] = 'RETRY'
+                if submission_error:
+                    fileDoc['list_of_failure_reason'] = "Job could not be submitted to FTS: temporary problem of FTS"
+                    fileDoc['list_of_retry_value'] = 1
+                elif not self.valid_proxy:
+                    fileDoc['list_of_failure_reason'] = "Job could not be submitted to FTS: user's proxy expired"
+                    fileDoc['list_of_retry_value'] = 1
+                else:
+                    fileDoc['list_of_failure_reason'] = "Site config problem."
+                    fileDoc['list_of_retry_value'] = 1
+
+                self.logger.debug("update: %s" % fileDoc)
                 try:
-                    self.db.commit()
+                    updated_lfn.append(docId)
+                    result = self.oracleDB.post('/crabserver/dev/filetransfers',
+                                         data=encodeRequest(fileDoc))
                 except Exception as ex:
-                    msg = "Error commiting documents in couch"
+                    msg = "Error updating document"
                     msg += str(ex)
                     msg += str(traceback.format_exc())
                     self.logger.error(msg)
                     continue
-        self.logger.debug("failed file updated")
-        return updated_lfn
+
+            else:
+                docId = getHashLfn(temp_lfn)
+                try:
+                    document = self.db.document(docId)
+                except Exception as ex:
+                    msg = "Error loading document from couch"
+                    msg += str(ex)
+                    msg += str(traceback.format_exc())
+                    self.logger.error(msg)
+                    continue
+                if document['state'] != 'killed' and document['state'] != 'done' and document['state'] != 'failed':
+                    now = str(datetime.datetime.now())
+                    last_update = time.time()
+                    # Prepare data to update the document in couch
+                    if force_fail or len(document['retry_count']) + 1 > self.max_retry:
+                        data['state'] = 'failed'
+                    else:
+                        data['state'] = 'retry'
+                    if submission_error:
+                        data['failure_reason'] = "Job could not be submitted to FTS: temporary problem of FTS"
+                    elif not self.valid_proxy:
+                        data['failure_reason'] = "Job could not be submitted to FTS: user's proxy expired"
+                    else:
+                        data['failure_reason'] = "Site config problem."
+                    data['last_update'] = last_update
+                    data['retry'] = now
+
+                    # Update the document in couch
+                    self.logger.debug("Marking failed %s" % docId)
+                    try:
+                        updateUri = "/" + self.db.name + "/_design/AsyncTransfer/_update/updateJobs/" + docId
+                        updateUri += "?" + urllib.urlencode(data)
+                        self.db.makeRequest(uri=updateUri, type="PUT", decode=False)
+                        updated_lfn.append(docId)
+                        self.logger.debug("Marked failed %s" % docId)
+                    except Exception as ex:
+                        msg = "Error in updating document in couch"
+                        msg += str(ex)
+                        msg += str(traceback.format_exc())
+                        self.logger.error(msg)
+                        continue
+                    try:
+                        self.db.commit()
+                    except Exception as ex:
+                        msg = "Error commiting documents in couch"
+                        msg += str(ex)
+                        msg += str(traceback.format_exc())
+                        self.logger.error(msg)
+                        continue
+            self.logger.debug("failed file updated")
+            return updated_lfn
 
     def mark_incomplete(self, files=[]):
         """
