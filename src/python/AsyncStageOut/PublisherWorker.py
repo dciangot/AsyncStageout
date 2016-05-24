@@ -35,6 +35,8 @@ from AsyncStageOut import getHashLfn
 from AsyncStageOut import getDNFromUserName
 from AsyncStageOut import getCommonLogFormatter
 
+from RESTInteractions import HTTPRequests
+from ServerUtilities import getHashLfn, PUBLICATIONDB_STATUSES, encodeRequest, oracleOutputMapping
 
 class PublisherWorker:
     """
@@ -174,6 +176,10 @@ class PublisherWorker:
             msg += str(traceback.format_exc())
             self.logger.debug(msg)
 
+        self.oracleDB = HTTPRequests(self.config.oracleDB,
+                                     self.config.opsProxy,
+                                     self.config.opsProxy)
+
 
     def __call__(self):
         """
@@ -189,19 +195,24 @@ class PublisherWorker:
             fileDoc = {}
             fileDoc['asoworker'] = self.config.asoworker
             fileDoc['subresource'] = 'acquiredPublication'
-            fileDoc['grouping'] = 0
+            fileDoc['grouping'] = 1
             fileDoc['username'] = self.user
             result = []
             try:
                 results = self.oracleDB.get(self.config.oracleFileTrans,
-                                           data=encodeRequest(fileDoc))
-                result = oracleOutputMapping(results)
-                #TODO: format it correctly
-                res = [[x for x in result]
+                                            data=encodeRequest(fileDoc))
+                toPub_docs = oracleOutputMapping(results)
+                active_user_workflows = list(set([{'key': [x['username'],
+                                                           x['group'],
+                                                           x['role'],
+                                                           x['taskname']
+                                                          ]
+                                                   for x in toPub_docs
+                                                  }]))
             except Exception as ex:
                 self.logger.error("Failed to get acquired publications \
                                   from oracleDB: %s" %ex)
-            return res, result
+                return
         else:
             query = {'group': True, 'startkey': [self.user, self.group, self.role], 'endkey': [self.user, self.group, self.role, {}]}
             try:
@@ -214,29 +225,47 @@ class PublisherWorker:
             self.logger.debug('active user wfs: %s' % active_user_workflows)
             self.logger.info('number of active user wfs: %s' % len(active_user_workflows))
             now = time.time()
-        ## Loop over the user workflows.
+        ## Loop over the user workflows
+        if self.config.isOracle:
+            active_ = [{'key': [x['username'],
+                                x['group'],
+                                x['role'],
+                                x['taskname']],
+                        'value': [x['destination'],
+                                  x['source_lfn'],
+                                  x['destination_lfn'],
+                                  x['input_dataset'],
+                                  x['dbs_url'],
+                                  x['end_time']
+                                 ]}
+                       for x in toPub_docs]
+
         for user_wf in active_user_workflows:
             workflow = str(user_wf['key'][3])
             wfnamemsg = "%s: " % (workflow)
             ## Get the list of active files in the workflow.
-            active_files = []
-            query = {'reduce': False, 'key': user_wf['key']}#'stale': 'ok'}
-            try:
-                active_files = self.db.loadView('DBSPublisher', 'publish', query)['rows']
-            except Exception as e:
-                msg = "A problem occured to retrieve \
-                        the list of active files for %s: %s" % (self.user, e)
-                self.logger.error(wfnamemsg+msg)
-                msg = "Publications will be retried next time."
+            if self.config.isOracle:
+                active_files = [x for x in active_
+                                if x['key'] == user_wf['key']]
+            else:
+                active_files = []
+                query = {'reduce': False, 'key': user_wf['key']}#'stale': 'ok'}
+                try:
+                    active_files = self.db.loadView('DBSPublisher', 'publish', query)['rows']
+                except Exception as e:
+                    msg = "A problem occured to retrieve \
+                            the list of active files for %s: %s" % (self.user, e)
+                    self.logger.error(wfnamemsg+msg)
+                    msg = "Publications will be retried next time."
+                    self.logger.info(wfnamemsg+msg)
+                    continue
+                msg = "Number of active files: %s." % (len(active_files))
                 self.logger.info(wfnamemsg+msg)
-                continue
-            msg = "Number of active files: %s." % (len(active_files))
-            self.logger.info(wfnamemsg+msg)
-            ## If there are no files to publish, continue with the next workflow.
-            if not active_files:
-                msg = "Continuing with next workflow/user in the loop."
-                self.logger.info(wfnamemsg+msg)
-                continue
+                ## If there are no files to publish, continue with the next workflow.
+                if not active_files:
+                    msg = "Continuing with next workflow/user in the loop."
+                    self.logger.info(wfnamemsg+msg)
+                    continue
             ## Get the job endtime, destination site, input dataset and input DBS URL for
             ## the active files in the workflow. Put the destination LFNs in a list of ready
             ## files grouped by output dataset.
@@ -443,32 +472,51 @@ class PublisherWorker:
         """
         wfnamemsg = "%s: " % (workflow)
         last_update = int(time.time())
-        for lfn in files:
-            data = {}
-            source_lfn = self.lfn_map[lfn]
-            docId = getHashLfn(source_lfn)
-            msg = "Marking file %s as published." % (lfn)
-            msg += " Document id: %s (source LFN: %s)." % (docId, source_lfn)
-            self.logger.info(wfnamemsg+msg)
-            data['publication_state'] = 'published'
-            data['last_update'] = last_update
+        if self.config.isOracle:
+            for lfn in files:
+                data = {}
+                source_lfn = self.lfn_map[lfn]
+                docId = getHashLfn(source_lfn)
+                msg = "Marking file %s as published." % (lfn)
+                msg += " Document id: %s (source LFN: %s)." % (docId, source_lfn)
+                self.logger.info(wfnamemsg+msg)
+                data['asoworker'] = self.config.asoworker
+                data['subresource'] = 'updatePublication'
+                data['list_of_ids'] = docId
+                data['list_of_publication_state'] = 'DONE'
+                try:
+                    result = self.oracleDB.post('/crabserver/dev/filetransfers',
+                                                data=encodeRequest(data))
+                except Exception as ex:
+                    self.logger.error("Error during status update: %s" %ex)
+
+        else:
+            for lfn in files:
+                data = {}
+                source_lfn = self.lfn_map[lfn]
+                docId = getHashLfn(source_lfn)
+                msg = "Marking file %s as published." % (lfn)
+                msg += " Document id: %s (source LFN: %s)." % (docId, source_lfn)
+                self.logger.info(wfnamemsg+msg)
+                data['publication_state'] = 'published'
+                data['last_update'] = last_update
+                try:
+                    updateUri = "/" + self.db.name + "/_design/DBSPublisher/_update/updateFile/" + getHashLfn(source_lfn)
+                    updateUri += "?" + urllib.urlencode(data)
+                    self.logger.info(wfnamemsg+"URI: %s" % updateUri)
+                    self.db.makeRequest(uri=updateUri, type="PUT", decode=False)
+                except Exception as ex:
+                    msg = "Error updating document in Couch."
+                    msg += str(ex)
+                    msg += str(traceback.format_exc())
+                    self.logger.error(wfnamemsg+msg)
             try:
-                updateUri = "/" + self.db.name + "/_design/DBSPublisher/_update/updateFile/" + getHashLfn(source_lfn)
-                updateUri += "?" + urllib.urlencode(data)
-                self.logger.info(wfnamemsg+"URI: %s" % updateUri)
-                self.db.makeRequest(uri=updateUri, type="PUT", decode=False)
+                self.db.commit()
             except Exception as ex:
-                msg = "Error updating document in Couch."
+                msg = "Error committing documents in Couch."
                 msg += str(ex)
                 msg += str(traceback.format_exc())
                 self.logger.error(wfnamemsg+msg)
-        try:
-            self.db.commit()
-        except Exception as ex:
-            msg = "Error committing documents in Couch."
-            msg += str(ex)
-            msg += str(traceback.format_exc())
-            self.logger.error(wfnamemsg+msg)
 
 
     def mark_failed(self, workflow, files, failure_reason="", force_failure=False):
@@ -478,48 +526,85 @@ class PublisherWorker:
         wfnamemsg = "%s: " % (workflow)
         now = str(datetime.datetime.now())
         last_update = int(time.time())
-        for lfn in files:
-            data = {}
-            source_lfn = self.lfn_map[lfn]
-            docId = getHashLfn(source_lfn)
-            msg = "Marking file %s as failed." % (lfn)
-            msg += " Document id: %s (source LFN: %s)." % (docId, source_lfn)
-            self.logger.info(wfnamemsg+msg)
-            # Load document to get the retry_count
+        if self.config.isOracle:
+            for lfn in files:
+                source_lfn = self.lfn_map[lfn]
+                docId = getHashLfn(source_lfn)
+                self.logger.debug("Marking failed %s" % docId)
+                try:
+                    docbyId = self.oracleDB.get('/crabserver/dev/fileusertransfers',
+                                                data=encodeRequest({'subresource': 'getById', 'id': docId}))
+                except Exception as ex:
+                    self.logger.error("Error updating failed docs: %s" %ex)
+                    continue
+                document = oracleOutputMapping(docbyId, None)[0]
+                self.logger.debug("Document: %s" % document)
+
+                fileDoc = {}
+                fileDoc['asoworker'] = 'asodciangot1'
+                fileDoc['subresource'] = 'updatePublication'
+                fileDoc['list_of_ids'] = docId
+
+                if force_failure or document['publish_retry_count'] > self.max_retry:
+                    fileDoc['list_of_publication_state'] = 'FAILED'
+                else:
+                    fileDoc['list_of_publication_state'] = 'RETRY'
+                fileDoc['list_of_retry_value'] = 1
+                fileDoc['list_of_failure_reason'] = failure_reason
+
+                self.logger.debug("update: %s" % fileDoc)
+                try:
+                    result = self.oracleDB.post('/crabserver/dev/filetransfers',
+                                                data=encodeRequest(fileDoc))
+                except Exception as ex:
+                    msg = "Error updating document"
+                    msg += str(ex)
+                    msg += str(traceback.format_exc())
+                    self.logger.error(msg)
+                    continue
+        else:
+            for lfn in files:
+                data = {}
+                source_lfn = self.lfn_map[lfn]
+                docId = getHashLfn(source_lfn)
+                msg = "Marking file %s as failed." % (lfn)
+                msg += " Document id: %s (source LFN: %s)." % (docId, source_lfn)
+                self.logger.info(wfnamemsg+msg)
+                # Load document to get the retry_count
+                try:
+                    document = self.db.document(docId)
+                except Exception as ex:
+                    msg = "Error loading document from Couch."
+                    msg += str(ex)
+                    msg += str(traceback.format_exc())
+                    self.logger.error(wfnamemsg+msg)
+                    continue
+                # Prepare data to update the document in couch
+                if len(document['publication_retry_count']) + 1 > self.max_retry or force_failure:
+                    data['publication_state'] = 'publication_failed'
+                else:
+                    data['publication_state'] = 'publishing'
+                data['last_update'] = last_update
+                data['retry'] = now
+                data['publication_failure_reason'] = failure_reason
+                # Update the document in couch
+                try:
+                    updateUri = "/" + self.db.name + "/_design/DBSPublisher/_update/updateFile/" + docId
+                    updateUri += "?" + urllib.urlencode(data)
+                    self.logger.info(wfnamemsg+"URI: %s" % updateUri)
+                    self.db.makeRequest(uri=updateUri, type="PUT", decode=False)
+                except Exception as ex:
+                    msg = "Error updating document in Couch."
+                    msg += str(ex)
+                    msg += str(traceback.format_exc())
+                    self.logger.error(wfnamemsg+msg)
             try:
-                document = self.db.document(docId)
+                self.db.commit()
             except Exception as ex:
-                msg = "Error loading document from Couch."
+                msg = "Error committing documents in Couch."
                 msg += str(ex)
                 msg += str(traceback.format_exc())
                 self.logger.error(wfnamemsg+msg)
-                continue
-            # Prepare data to update the document in couch
-            if len(document['publication_retry_count']) + 1 > self.max_retry or force_failure:
-                data['publication_state'] = 'publication_failed'
-            else:
-                data['publication_state'] = 'publishing'
-            data['last_update'] = last_update
-            data['retry'] = now
-            data['publication_failure_reason'] = failure_reason
-            # Update the document in couch
-            try:
-                updateUri = "/" + self.db.name + "/_design/DBSPublisher/_update/updateFile/" + docId
-                updateUri += "?" + urllib.urlencode(data)
-                self.logger.info(wfnamemsg+"URI: %s" % updateUri)
-                self.db.makeRequest(uri=updateUri, type="PUT", decode=False)
-            except Exception as ex:
-                msg = "Error updating document in Couch."
-                msg += str(ex)
-                msg += str(traceback.format_exc())
-                self.logger.error(wfnamemsg+msg)
-        try:
-            self.db.commit()
-        except Exception as ex:
-            msg = "Error committing documents in Couch."
-            msg += str(ex)
-            msg += str(traceback.format_exc())
-            self.logger.error(wfnamemsg+msg)
 
 
     def publish(self, workflow, inputDataset, sourceURL, pnn, lfn_ready):

@@ -113,6 +113,21 @@ class PublisherDaemon(BaseDaemon):
             except Exception as ex:
                 self.logger.error("Failed to acquire publications \
                                   from oracleDB: %s" %ex)
+
+            fileDoc = {}
+            fileDoc['asoworker'] = self.config.asoworker
+            fileDoc['subresource'] = 'acquiredPublication'
+            fileDoc['grouping'] = 0
+
+            self.logger.debug("Retrieving acquired puclications from oracleDB")
+
+            try:
+                results = db.get(self.config.oracleFileTrans,
+                                  data=encodeRequest(fileDoc))
+            except Exception as ex:
+                self.logger.error("Failed to acquire publications \
+                                  from oracleDB: %s" %ex)
+
             result = oracleOutputMapping(results)
 
             #TODO: join query for publisher (same of submitter)
