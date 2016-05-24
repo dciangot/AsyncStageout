@@ -48,7 +48,7 @@ def ftscp(user, tfc_map, config):
             logging.debug("Worker cannot start!:" %e)
             return user
     else:
-        loggingretryTransfers.debug("Worker cannot be initialized!")
+        logging.debug("Worker cannot be initialized!")
     return user
 
 def log_result(result):
