@@ -80,6 +80,26 @@ config.AsyncTransfer.schedAlgoDir = 'AsyncStageOut.SchedPlugins'
 config.AsyncTransfer.algoName = 'FIFOPriority'
 config.AsyncTransfer.config_couch_instance = couchUrl
 config.AsyncTransfer.cache_area = cache_area
+config.component_('Monitor')
+config.Monitor.serviceCert = '/data/certs/hostcert.pem'
+config.Monitor.serviceKey = '/data/certs/hostkey.pem'
+config.Monitor.cache_area = 'https://cmsweb-testbed.cern.ch/crabserver/preprod/filemetadata'
+config.Monitor.opsProxy = '/data/srv/asyncstageout/state/asyncstageout/creds/OpsProxy'
+config.Monitor.UISetupScript = '/data/srv/tmp.sh'
+config.Monitor.serverDN = '/DC=ch/DC=cern/OU=computers/CN=asotest.cern.ch'
+config.Monitor.credentialDir = '/data/srv/asyncstageout/state/asyncstageout/creds'
+config.Monitor.job_poll_intervall = 3
+config.Monitor.fts_server = 'https://fts3-pilot.cern.ch:8446'
+config.Monitor.pool_size = 80
+config.Monitor.max_jobs_per_user = 40
+config.Monitor.jobs_per_thread = 4 
+config.Monitor.schedAlgoDir = 'FIFOPriority'
+config.Monitor.logLevel = 'INFO'
+config.Monitor.logMsgFormat = '%(asctime)s:%(levelname)s:%(module)s:%(name)s: %(message)s'
+config.Monitor.namespace = 'AsyncStageOut.Monitor'
+config.Monitor.log_level = 10
+config.Monitor.componentDir = '/data/srv/asyncstageout/current/install/asyncstageout/Monitor'
+config.Monitor.outputdir = '/home/dciangot/105pre3/v1.0.5pre3/install/asyncstageout/AsyncTransfer/dropbox/outputs'
 config.component_('Reporter')
 config.Reporter.logLevel = 'INFO'
 config.Reporter.log_level = logging.INFO

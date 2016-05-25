@@ -68,6 +68,15 @@ class TransferWorker:
         self.tfc_map = tfc_map
         self.config = config
         self.dropbox_dir = '%s/dropbox/outputs/%s' % (self.config.componentDir, self.user)
+        if not os.path.isdir(self.dropbox_dir):
+            try:
+                os.makedirs(self.dropbox_dir)
+            except OSError as e:
+                if e.errno == errno.EEXIST:
+                    pass
+                else:
+                    self.logger.error('Unknown error in mkdir' % e.errno)
+                    raise
         logging.basicConfig(level=config.log_level)
         self.logger = logging.getLogger('AsyncTransfer-Worker-%s' % self.user)
         formatter = getCommonLogFormatter(self.config)
@@ -83,6 +92,8 @@ class TransferWorker:
         if getattr(self.config, 'cleanEnvironment', False):
             self.cleanEnvironment = 'unset LD_LIBRARY_PATH; unset X509_USER_CERT; unset X509_USER_KEY;'
         self.logger.debug("Trying to get DN for %s" % self.user)
+        self.userDN = 'imaDummyDNfor/%s' %self.user
+        '''
         try:
             self.userDN = getDNFromUserName(self.user, self.logger, ckey=self.config.opsProxy, cert=self.config.opsProxy)
         except Exception as ex:
@@ -103,7 +114,7 @@ class TransferWorker:
                              'serverDN' : self.config.serverDN,
                              'uisource' : self.uiSetupScript,
                              'cleanEnvironment' : getattr(self.config, 'cleanEnvironment', False)}
-
+        '''
         # Set up a factory for loading plugins
         self.factory = WMFactory(self.config.pluginDir, namespace=self.config.pluginDir)
         self.commandTimeout = 1200
@@ -113,6 +124,7 @@ class TransferWorker:
         self.config_db = config_server.connectDatabase(self.config.config_database)
         self.fts_server_for_transfer = getFTServer("T1_UK_RAL", 'getRunningFTSserver', self.config_db, self.logger)
 
+        '''
         if hasattr(self.config, "cache_area"):
             try:
                 defaultDelegation['myproxyAccount'] = re.compile('https?://([^/]*)/.*').findall(self.config.cache_area)[0]
@@ -135,23 +147,24 @@ class TransferWorker:
                 except IndexError:
                    self.logger.error('MyproxyAccount parameter cannot be retrieved from %s' % (self.cache_area))
                    pass
-
+        
         if getattr(self.config, 'serviceCert', None):
             defaultDelegation['server_cert'] = self.config.serviceCert
         if getattr(self.config, 'serviceKey', None):
             defaultDelegation['server_key'] = self.config.serviceKey
-        self.valid_proxy = False
-        self.user_proxy = None
-        try:
-            defaultDelegation['userDN'] = self.userDN
-            defaultDelegation['group'] = self.group
-            defaultDelegation['role'] = self.role
-            self.valid_proxy, self.user_proxy = getProxy(defaultDelegation, self.logger)
-        except Exception as ex:
-            msg = "Error getting the user proxy"
-            msg += str(ex)
-            msg += str(traceback.format_exc())
-            self.logger.error(msg)
+        '''
+        self.valid_proxy = True
+        self.user_proxy = self.config.opsProxy
+        #try:
+        #    defaultDelegation['userDN'] = self.userDN
+        #    defaultDelegation['group'] = self.group
+        #    defaultDelegation['role'] = self.role
+        #    self.valid_proxy, self.user_proxy = getProxy(defaultDelegation, self.logger)
+        #except Exception as ex:
+        #    msg = "Error getting the user proxy"
+        #    msg += str(ex)
+        #    msg += str(traceback.format_exc())
+        #    self.logger.error(msg)
 
     def __call__(self):
         """
@@ -183,7 +196,7 @@ class TransferWorker:
                  'startkey':[self.user, self.group, self.role], 'endkey':[self.user, self.group, self.role, {}, {}]}
                  #'stale': 'ok'}
         try:
-            sites = self.db.loadView('AsyncTransfer', 'ftscp_all', query)
+            sites = self.db.loadView('ftscp', 'ftscp_all', query)
         except:
             return []
         def keys_map(dict):
@@ -212,7 +225,7 @@ class TransferWorker:
                          'key':[self.user, self.group, self.role, destination, source],
                          'stale': 'ok'}
                 try:
-                    active_files = self.db.loadView('AsyncTransfer', 'ftscp_all', query)['rows']
+                    active_files = self.db.loadView('ftscp', 'ftscp_all', query)['rows']
                 except:
                     continue
                 self.logger.debug('%s has %s files to transfer from %s to %s' % (self.user, len(active_files),
@@ -336,7 +349,7 @@ class TransferWorker:
                 tempDict["destinations"].append(SrcDest.split(" ")[1])
                 rest_copyjob["files"].append(tempDict)
 
-
+            '''
             self.logger.debug("Subbmitting this REST copyjob %s" % rest_copyjob)
             url = self.fts_server_for_transfer + '/jobs'
             self.logger.debug("Running FTS submission command")
@@ -368,6 +381,7 @@ class TransferWorker:
                 failure_reasons.append(msg)
                 submission_error = True
             buf.close()
+            
             job_id = 0
             fileId_list = []
             if not submission_error:
@@ -389,6 +403,7 @@ class TransferWorker:
                     file_url = self.fts_server_for_transfer + '/jobs/' + job_id +'/files'
                     self.logger.debug("Submitting to %s" % file_url)
                     file_buf = StringIO.StringIO()
+                    
                     try:
                         response, files_ = connection.request(file_url, {}, heade, doseq=True, ckey=self.user_proxy,
                                                               cert=self.user_proxy,
@@ -402,6 +417,7 @@ class TransferWorker:
                         self.logger.debug(msg)
                         submission_error = True
                         failure_reasons.append(msg)
+                    
                     self.logger.debug("List files in job %s" % files_)
                     file_buf.close()
                     for file_in_job in files_res:
@@ -420,17 +436,21 @@ class TransferWorker:
                 failed_files = self.mark_failed(jobs_lfn[link], force_fail=False, submission_error=True)
                 self.logger.info("Marked failed %s" % len(failed_files))
                 continue
-            fts_job['userProxyPath'] = self.user_proxy
-            fts_job['LFNs'] = jobs_lfn[link]
-            fts_job['PFNs'] = jobs_pfn[link]
-            fts_job['FTSJobid'] = job_id
-            fts_job['files_id'] = fileId_list
-            fts_job['username'] = self.user
-            self.logger.debug("Creating json file %s in %s" % (fts_job, self.dropbox_dir))
-            ftsjob_file = open('%s/Monitor.%s.json' % (self.dropbox_dir, fts_job['FTSJobid']), 'w')
-            jsondata = json.dumps(fts_job)
-            ftsjob_file.write(jsondata)
-            ftsjob_file.close()
+            '''
+            try:
+                fts_job['userProxyPath'] = self.user_proxy
+                fts_job['LFNs'] = jobs_lfn[link]
+                fts_job['PFNs'] = jobs_pfn[link]
+                fts_job['FTSJobid'] = getHashLfn(jobs_lfn[link][0])
+                fts_job['files_id'] = [getHashLfn(x) for x in jobs_lfn[link]]
+                fts_job['username'] = self.user
+                self.logger.debug("Creating json file %s in %s" % (fts_job, self.dropbox_dir))
+                ftsjob_file = open('%s/Monitor.%s.json' % (self.dropbox_dir, fts_job['FTSJobid']), 'w')
+                jsondata = json.dumps(fts_job)
+                ftsjob_file.write(jsondata)
+                ftsjob_file.close()
+            except Exception as ex:
+                self.logger.error("%s" %ex)
             self.logger.debug("%s ready." % fts_job)
             # Prepare Dashboard report
             for lfn in fts_job['LFNs']:
@@ -564,6 +584,7 @@ class TransferWorker:
                     temp_lfn = lfn['value'][0]
 
             docId = getHashLfn(temp_lfn)
+            self.logger.debug('Marking failed %s for %s' %(docId, temp_lfn))
 
             # Load document to get the retry_count
             try:

@@ -117,12 +117,13 @@ class TransferDaemon(BaseDaemon):
 
         site_tfc_map = {}
         for site in sites:
+            self.logger.debug('Im in')
             # TODO: Remove this check once the ASO request will be validated before the upload.
             if site and str(site) != 'None' and str(site) != 'unknown':
                 site_tfc_map[site] = self.get_tfc_rules(site)
         self.logger.debug('kicking off pool')
         for u in users:
-	    if "dciangot" in u:	
+	      #if "dciangot" in u:	
              self.logger.debug('current_running %s' %current_running)
              if u not in current_running:
                 self.logger.debug('processing %s' %u)
@@ -140,7 +141,7 @@ class TransferDaemon(BaseDaemon):
         #query = {'group': True, 'group_level': 3, 'stale': 'ok'}
         query = {'group': True, 'group_level': 3}
         try:
-            users = db.loadView('AsyncTransfer', 'ftscp_all', query)
+            users = db.loadView('ftscp', 'ftscp_all', query)
         except Exception as e:
             self.logger.exception('A problem occured when contacting couchDB: %s' % e)
             return []

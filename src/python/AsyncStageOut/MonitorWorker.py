@@ -67,12 +67,12 @@ def execute_command(command, logger, timeout):
 
 class MonitorWorker:
 
-    def __init__(self, user, split, list, config):
+    def __init__(self, user, split, list_job, config):
         """
         store the user and tfc the worker
         """
         self.split = split
-        self.jobids = list
+        self.jobids = list_job
         self.config = config
         self.logger = logging.getLogger('MonitorTransfer-Worker-%s-%s' % (user, self.split))
         self.commandTimeout = 1200
@@ -82,6 +82,7 @@ class MonitorWorker:
             self.cleanEnvironment = 'unset LD_LIBRARY_PATH; unset X509_USER_CERT; unset X509_USER_KEY;'
         self.user = user
         self.logger.debug("Trying to get DN for %s" %self.user)
+        '''
         try:
             self.userDN = getDNFromUserName(self.user, self.logger)
         except Exception as ex:
@@ -116,20 +117,18 @@ class MonitorWorker:
                 defaultDelegation['server_key'] = self.config.serviceKey
 
         self.logger.debug('cache: %s' %self.config.cache_area)
-#        self.valid = False
-#        proxy=''
-#        try:
-#
-#            self.valid, proxy = getProxy(self.userDN, "", "", defaultDelegation, self.logger)
-	self.valid = True
-	proxy='/data/srv/asyncstageout/state/asyncstageout/creds/OpsProxy'
-
-#        except Exception as ex:
-#
-#            msg = "Error getting the user proxy"
-#            msg += str(ex)
-#            msg += str(traceback.format_exc())
-#            self.logger.error(msg)
+        '''
+        self.userDN = 'testME'
+        self.valid = True
+        proxy=self.config.opsProxy
+        '''
+        try:
+            self.valid, proxy = getProxy(self.userDN, "", "", defaultDelegation, self.logger)
+        except Exception as ex:
+            msg = "Error getting the user proxy"
+            msg += str(ex)
+            msg += str(traceback.format_exc())
+            self.logger.error(msg)
 
         if self.valid:
             self.userProxy = proxy
@@ -141,6 +140,7 @@ class MonitorWorker:
 
         # Proxy management in Couch
         os.environ['X509_USER_PROXY'] = self.userProxy
+        '''
 
     def __call__(self):
         """
@@ -151,7 +151,10 @@ class MonitorWorker:
             heade = {"Content-Type ":"application/json"}
             for jid in self.jobids:
                 self.jobid=jid.split(".")[1]
-                self.logger.debug("Connecting to REST FTS for job %s" % self.jobid)
+                with open(self.config.outputdir+'/%s/Monitor.%s.json' % (self.user, self.jobid)) as json_file:
+                   json_data = json.load(json_file)
+                self.logger.debug("Connecting to REST FTS for job %s" % json_data)
+                '''
                 url = self.config.fts_server + '/jobs/%s' % self.jobid
                 self.logger.debug("FTS server: %s" % self.config.fts_server)
                 buf = StringIO.StringIO()
@@ -224,28 +227,39 @@ class MonitorWorker:
                             reasons.append(reason)
                             self.logger.debug("ASO doc %s of user %s in state %s (%s)" % \
                                               (getHashLfn(source), user, state, timestamps))
-
+                    
                     reporter["LFNs"] = lfns
                     reporter["transferStatus"] = statuses
                     reporter["username"] = user
                     reporter["reasons"] = reasons
                     reporter["timestamp"] = timestamps
+                    '''
+                reporter = {
+                            "LFNs": [],
+                            "transferStatus": [],
+                            "failure_reason": [],
+                            "timestamp": [],
+                            "username": ""
+                }
+                reporter["LFNs"] = json_data["LFNs"]
+                reporter["transferStatus"] = ['Finished' for x in range(len(reporter["LFNs"]))]
+                reporter["username"] = self.user
+                reporter["reasons"] = ['' for x in range(len(reporter["LFNs"]))]
+                reporter["timestamp"] = 10000 
+                report_j = json.dumps(reporter)
 
-                    report_j = json.dumps(reporter)
+                self.logger.debug("Creating report %s" % report_j)
+                try:
+                    if not os.path.exists(self.config.componentDir+"/work/%s" %self.user):
+                        os.makedirs(self.config.componentDir+"/work/%s" %self.user)
+                    out_file = open(self.config.componentDir+"/work/%s/Reporter.%s.json"%(self.user,self.jobid),"w")
+                    out_file.write(report_j)
+                    out_file.close()
+                    os.remove(self.config.outputdir+'/%s/Monitor.%s.json' %(self.user,self.jobid))
+                except Exception as ex:
+                    msg="Cannot create fts job report: %s" %ex
+                    self.logger.error(msg)
 
-                    self.logger.debug("Creating report %s" % report_j)
-                    try:
-                        if not os.path.exists(self.config.componentDir+"/work/%s" %user):
-                            os.makedirs(self.config.componentDir+"/work/%s" %user)
-                        out_file = open(self.config.componentDir+"/work/%s/Reporter.%s.json"%(user,self.jobid),"w")
-                        out_file.write(report_j)
-                        out_file.close()
-                        os.remove('/data/srv/asyncstageout/v1.0.4/install/asyncstageout/AsyncTransfer/dropbox/outputs/%s/Monitor.%s.json'
-                                  %(user,self.jobid))
-                    except Exception as ex:
-                        msg="Cannot create fts job report: %s" %ex
-                        self.logger.error(msg)
-
-                else:
-                    success = False
-                    time.sleep(self.config.job_poll_intervall)
+                #else:
+                #    success = False
+                #    time.sleep(self.config.job_poll_intervall)

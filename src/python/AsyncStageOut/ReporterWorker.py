@@ -58,7 +58,7 @@ class ReporterWorker:
         """
         self.user = user
         self.config = config
-        self.dropbox_dir = '%s/dropbox/inputs' % self.config.componentDir
+        self.dropbox_dir = self.config.reporter_dir
         logging.basicConfig(level=config.log_level)
         self.logger = logging.getLogger('AsyncTransfer-Reporter-%s' % self.user)
         formatter = getCommonLogFormatter(self.config)
@@ -72,6 +72,8 @@ class ReporterWorker:
             self.cleanEnvironment = 'unset LD_LIBRARY_PATH; unset X509_USER_CERT; unset X509_USER_KEY;'
         # TODO: improve how the worker gets a log
         self.logger.debug("Trying to get DN")
+        self.userDN = 'testME'
+        '''
         try:
             self.userDN = getDNFromUserName(self.user, self.logger)
         except Exception, ex:
@@ -125,7 +127,9 @@ class ReporterWorker:
             # This will be moved soon
             self.logger.error('Did not get valid proxy. Setting proxy to ops proxy')
             self.userProxy = config.opsProxy
-
+        '''
+        self.valid = False
+        self.userProxy = config.opsProxy
         # Set up a factory for loading plugins
         self.factory = WMFactory(self.config.pluginDir, namespace = self.config.pluginDir)
         self.commandTimeout = 1200
