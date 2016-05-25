@@ -80,6 +80,7 @@ config.AsyncTransfer.schedAlgoDir = 'AsyncStageOut.SchedPlugins'
 config.AsyncTransfer.algoName = 'FIFOPriority'
 config.AsyncTransfer.config_couch_instance = couchUrl
 config.AsyncTransfer.cache_area = cache_area
+config.AsyncTransfer.reporter_dir = "/home/dciangot/105pre3/v1.0.5pre3/install/asyncstageout/Monitor/work"
 config.component_('Monitor')
 config.Monitor.serviceCert = '/data/certs/hostcert.pem'
 config.Monitor.serviceKey = '/data/certs/hostkey.pem'
