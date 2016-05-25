@@ -87,13 +87,7 @@ class MonitorDaemon(BaseWorkerThread):
 
         size = len(files)
 
-        if size <= self.config.pool_size:
-            users = files
-        else:
-            sorted_jobs = self.factory.loadObject(self.config.algoName,
-                                                  args=[self.config, self.logger, files, self.config.pool_size],
-                                                  getFromCache=False, listFlag=True)
-            users = sorted_jobs()[:self.config.pool_size]
+        users = files
         self.logger.debug('Number of monitor active threads: %s' % len(current_running))
 
         for user in users:
