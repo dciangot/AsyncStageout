@@ -20,6 +20,9 @@ from WMCore.WMException import WMException
 from WMCore.Database.CMSCouch import CouchServer
 
 from AsyncStageOut.BaseDaemon import BaseDaemon
+from RESTInteractions import HTTPRequests
+from ServerUtilities import getHashLfn, generateTaskName,\
+        PUBLICATIONDB_STATUSES, encodeRequest, oracleOutputMapping
 
 def convertdatetime(t):
     """
@@ -54,15 +57,20 @@ class RetryManagerDaemon(BaseDaemon):
         """
         BaseDaemon.__init__(self, config, 'RetryManager')
 
-        try:
-            server = CouchServer(dburl=self.config.couch_instance, ckey=self.config.opsProxy, cert=self.config.opsProxy)
-            self.db = server.connectDatabase(self.config.files_database)
-        except Exception, e:
-            self.logger.exception('A problem occured when connecting to couchDB: %s' % e)
-            raise
-        self.logger.debug('Connected to files DB')
+        if self.config.isOracle:
+            self.oracleDB = HTTPRequests(self.config.oracleDB,
+                                         self.config.opsProxy,
+                                         self.config.opsProxy)
+        else:
+            try:
+                server = CouchServer(dburl=self.config.couch_instance, ckey=self.config.opsProxy, cert=self.config.opsProxy)
+                self.db = server.connectDatabase(self.config.files_database)
+            except Exception, e:
+                self.logger.exception('A problem occured when connecting to couchDB: %s' % e)
+                raise
+            self.logger.debug('Connected to files DB')
 
-        # Set up a factory for loading plugins
+            # Set up a factory for loading plugins
         self.factory = WMFactory(self.config.retryAlgoDir, namespace = self.config.retryAlgoDir)
         try:
             self.plugin = self.factory.loadObject(self.config.algoName, self.config, getFromCache = False, listFlag = True)
@@ -88,7 +96,20 @@ class RetryManagerDaemon(BaseDaemon):
         plugin for each job and handling it.
         """
         logging.debug("Running retryManager algorithm")
-        self.doRetries()
+        if self.config.isOracle:
+            fileDoc = {}
+            fileDoc['asoworker'] = self.config.asoworker
+            fileDoc['subresource'] = 'retryTransfers'
+            fileDoc['time_to'] = self.cooloffTime
+            result = []
+            try:
+                results = self.oracleDB.post(self.config.oracleFileTrans,
+                                           data=encodeRequest(fileDoc))
+            except Exception as ex:
+                self.logger.error("Failed to get retry transfers \
+                                  in oracleDB: %s" %ex)
+        else:
+            self.doRetries()
 
     def processRetries(self, files):
         """
@@ -183,11 +204,14 @@ class RetryManagerDaemon(BaseDaemon):
         available, create the subscriptions
         """
         # Discover files that are in cooloff
-        query = {'stale': 'ok'}
-        try:
-            files = self.db.loadView('AsyncTransfer', 'getFilesToRetry', query)['rows']
-        except Exception, e:
-            self.logger.exception('A problem occured when contacting couchDB to retrieve LFNs: %s' % e)
-            return
-        logging.info("Found %s files in cooloff" % len(files))
-        self.processRetries(files)
+        if self.config.isOracle:
+            
+        else:
+            query = {'stale': 'ok'}
+            try:
+                files = self.db.loadView('AsyncTransfer', 'getFilesToRetry', query)['rows']
+            except Exception, e:
+                self.logger.exception('A problem occured when contacting couchDB to retrieve LFNs: %s' % e)
+                return
+            logging.info("Found %s files in cooloff" % len(files))
+            self.processRetries(files)
