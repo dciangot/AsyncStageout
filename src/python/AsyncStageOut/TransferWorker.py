@@ -173,18 +173,16 @@ class TransferWorker:
         c. deletes successfully transferred files from the DB
         """
         fts_url_delegation = self.fts_server_for_transfer.replace('8446', '8443')
-        command = 'export X509_USER_PROXY=%s ; source %s ; %s -s %s' % (self.user_proxy, self.uiSetupScript,
-                                                                        'glite-delegation-init', fts_url_delegation)
-        init_time = str(time.strftime("%a, %d %b %Y %H:%M:%S", time.localtime()))
-        self.logger.debug("executing command: %s at: %s for: %s" % (command, init_time, self.userDN))
-        stdout, rc = execute_command(command, self.logger, self.commandTimeout)
-        if not rc or not self.valid_proxy:
-            jobs, jobs_lfn, jobs_pfn, jobs_report = self.files_for_transfer()
-            self.logger.debug("Processing files for %s " %self.user)
-            if jobs:
-                self.command(jobs, jobs_lfn, jobs_pfn, jobs_report)
-        else:
-            self.logger.debug("User proxy of %s could not be delagated! Trying next time." % self.user)
+        #command = 'export X509_USER_PROXY=%s ; source %s ; %s -s %s' % (self.user_proxy, self.uiSetupScript,
+            #                                                            'glite-delegation-init', fts_url_delegation)
+        #init_time = str(time.strftime("%a, %d %b %Y %H:%M:%S", time.localtime()))
+        #self.logger.debug("executing command: %s at: %s for: %s" % (command, init_time, self.userDN))
+        #stdout, rc = execute_command(command, self.logger, self.commandTimeout)
+        #if not rc or not self.valid_proxy:
+        jobs, jobs_lfn, jobs_pfn, jobs_report = self.files_for_transfer()
+        self.logger.debug("Processing files for %s " %self.user)
+        if jobs:
+            self.command(jobs, jobs_lfn, jobs_pfn, jobs_report)
         self.logger.info('Transfers completed')
         return
 
@@ -258,7 +256,10 @@ class TransferWorker:
                     else:
                         self.mark_failed([item])
                 self.logger.debug('Preparing job...')
-                map(tfc_map, active_files)
+		try:
+                	map(tfc_map, active_files)
+		except Exception as ex:
+			self.logger.exception("fail: %s" % ex)
                 self.logger.debug('Job prepared...')
                 if new_job:
                     jobs[(source, destination)] = new_job
@@ -266,7 +267,7 @@ class TransferWorker:
                     jobs_pfn[(source, destination)] = pfn_list
                     jobs_report[(source, destination)] = dash_report
                     self.logger.debug('FTS job ready for submission over  %s ---> %s ...going to next job'
-                                      % (source, destination))
+                                      % (self.user, len(jobs.keys())))
 
             self.logger.debug('ftscp input created for %s (%s jobs)' % (self.user, len(jobs.keys())))
             return jobs, jobs_lfn, jobs_pfn, jobs_report

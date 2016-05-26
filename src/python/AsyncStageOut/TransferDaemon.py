@@ -123,13 +123,13 @@ class TransferDaemon(BaseDaemon):
                 site_tfc_map[site] = self.get_tfc_rules(site)
         self.logger.debug('kicking off pool')
         for u in users:
-	      #if "dciangot" in u:	
-             self.logger.debug('current_running %s' %current_running)
-             if u not in current_running:
-                self.logger.debug('processing %s' %u)
-                current_running.append(u)
-                self.logger.debug('processing %s' %current_running)
-                self.pool.apply_async(ftscp,(u, site_tfc_map, self.config), callback = log_result)
+	     if "jmsilva" not in u:	
+		     self.logger.debug('current_running %s' %current_running)
+		     if u not in current_running:
+			self.logger.debug('processing %s' %u)
+			current_running.append(u)
+			self.logger.debug('processing %s' %current_running)
+			self.pool.apply_async(ftscp,(u, site_tfc_map, self.config), callback = log_result)
 
     def active_users(self, db):
         """

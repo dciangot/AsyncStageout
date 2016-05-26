@@ -29,7 +29,7 @@ sites = [#'T2_AT_Vienna',# 'T2_BE_IIHE', 'T2_BE_UCL',
          ]
 users_dest = {'fred': 'T2_IT_Legnaro', 'barney': 'T2_IT_Pisa', 'wilma': 'T2_IT_Rome', 'betty':'T2_IT_Bari'}
 
-size = 200 #TODO: read from script input
+size = 200000 #TODO: read from script input
 i = 100
 
 # lfn_base has store/temp in it twice to make sure that
@@ -43,7 +43,7 @@ last_update = int(time.time());
 print "Script starts at %s" %now
 
 while i <= size:
-    #time.sleep(0.05)
+    time.sleep(0.01)
     userd=random.choice(users)
     user = '%s_%s' % (userd,random.randint(0,20))
     now = str(datetime.datetime.now())   
@@ -104,6 +104,7 @@ while i <= size:
         print ex
     print "doc queued %s" %file_doc
     # TODO: Bulk commit of documents
+
     try:
         db.commit()
         print "commiting %s doc at %s" %( i, str(datetime.datetime.now()))
