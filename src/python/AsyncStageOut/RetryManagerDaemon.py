@@ -1,14 +1,12 @@
 #!/usr/bin/env python
-#pylint: disable-msg=W0613, W6501
+#pylint: disable-msg=W0613,invalid-name,logging-not-lazy,broad-except
 """
 __RetryManagerPoller__
 
 This component does the actualy retry logic. It allows to have
 different algorithms.
 """
-__all__ = []
 
-import os
 import time
 import urllib
 import logging
@@ -21,21 +19,21 @@ from WMCore.Database.CMSCouch import CouchServer
 
 from AsyncStageOut.BaseDaemon import BaseDaemon
 from RESTInteractions import HTTPRequests
-from ServerUtilities import getHashLfn, generateTaskName,\
-        PUBLICATIONDB_STATUSES, encodeRequest, oracleOutputMapping
+from ServerUtilities import encodeRequest
 
-def convertdatetime(t):
+__all__ = []
+def convertdatetime(time_to_convert):
     """
     Convert dates into useable format.
     """
-    return int(time.mktime(t.timetuple()))
+    return int(time.mktime(time_to_convert.timetuple()))
 
 def timestamp():
     """
     generate a timestamp
     """
-    t = datetime.datetime.now()
-    return convertdatetime(t)
+    time_now = datetime.datetime.now()
+    return convertdatetime(time_now)
 
 class RetryManagerException(WMException):
     """
@@ -63,19 +61,23 @@ class RetryManagerDaemon(BaseDaemon):
                                          self.config.opsProxy)
         else:
             try:
-                server = CouchServer(dburl=self.config.couch_instance, ckey=self.config.opsProxy, cert=self.config.opsProxy)
+                server = CouchServer(dburl=self.config.couch_instance,
+                                     ckey=self.config.opsProxy,
+                                     cert=self.config.opsProxy)
                 self.db = server.connectDatabase(self.config.files_database)
-            except Exception, e:
+            except Exception as e:
                 self.logger.exception('A problem occured when connecting to couchDB: %s' % e)
                 raise
             self.logger.debug('Connected to files DB')
 
             # Set up a factory for loading plugins
-        self.factory = WMFactory(self.config.retryAlgoDir, namespace = self.config.retryAlgoDir)
+        self.factory = WMFactory(self.config.retryAlgoDir, namespace=self.config.retryAlgoDir)
         try:
-            self.plugin = self.factory.loadObject(self.config.algoName, self.config, getFromCache = False, listFlag = True)
-        except Exception, ex:
-            msg = "Error loading plugin %s on path %s\n" % (self.config.algoName, self.config.retryAlgoDir)
+            self.plugin = self.factory.loadObject(self.config.algoName, self.config,
+                                                  getFromCache=False, listFlag=True)
+        except Exception as ex:
+            msg = "Error loading plugin %s on path %s\n" % (self.config.algoName,
+                                                            self.config.retryAlgoDir)
             msg += str(ex)
             self.logger.error(msg)
             raise RetryManagerException(msg)
@@ -90,7 +92,7 @@ class RetryManagerDaemon(BaseDaemon):
         self.algorithm(params)
 
 
-    def algorithm(self, parameters = None):
+    def algorithm(self, parameters=None):
         """
         Performs the doRetries method, loading the appropriate
         plugin for each job and handling it.
@@ -101,10 +103,9 @@ class RetryManagerDaemon(BaseDaemon):
             fileDoc['asoworker'] = self.config.asoworker
             fileDoc['subresource'] = 'retryTransfers'
             fileDoc['time_to'] = self.cooloffTime
-            result = []
             try:
                 results = self.oracleDB.post(self.config.oracleFileTrans,
-                                           data=encodeRequest(fileDoc))
+                                             data=encodeRequest(fileDoc))
             except Exception as ex:
                 self.logger.error("Failed to get retry transfers \
                                   in oracleDB: %s" %ex)
@@ -122,7 +123,7 @@ class RetryManagerDaemon(BaseDaemon):
             return
 
         propList = []
-        fileList = self.loadFilesFromList(recList = files)
+        fileList = self.loadFilesFromList(recList=files)
         logging.debug("Files in cooloff %s" % fileList)
         # Now we should have the files
         propList = self.selectFilesToRetry(fileList)
@@ -133,7 +134,7 @@ class RetryManagerDaemon(BaseDaemon):
             self.logger.debug("Trying to resubmit %s" % file['id'])
             try:
                 document = self.db.document(file['id'])
-            except Exception, ex:
+            except Exception as ex:
                 msg = "Error loading document from couch"
                 msg += str(ex)
                 msg += str(traceback.format_exc())
@@ -147,8 +148,8 @@ class RetryManagerDaemon(BaseDaemon):
                 updateUri = "/" + self.db.name + "/_design/AsyncTransfer/_update/updateJobs/" + file['id']
                 updateUri += "?" + urllib.urlencode(data)
                 try:
-                    self.db.makeRequest(uri = updateUri, type = "PUT", decode = False)
-                except Exception, ex:
+                    self.db.makeRequest(uri=updateUri, type="PUT", decode=False)
+                except Exception as ex:
                     msg = "Error updating document in couch"
                     msg += str(ex)
                     msg += str(traceback.format_exc())
@@ -187,10 +188,10 @@ class RetryManagerDaemon(BaseDaemon):
         for file in fileList:
             logging.debug("Current file %s" %file)
             try:
-                if self.plugin.isReady(file = file, cooloffTime = self.cooloffTime):
+                if self.plugin.isReady(file=file, cooloffTime=self.cooloffTime):
                     result.append(file)
-            except Exception, ex:
-                msg =  "Exception while checking for cooloff timeout for file %s\n" % file
+            except Exception as ex:
+                msg = "Exception while checking for cooloff timeout for file %s\n" % file
                 msg += str(ex)
                 logging.error(msg)
                 logging.debug("File: %s\n" % file)
@@ -204,14 +205,12 @@ class RetryManagerDaemon(BaseDaemon):
         available, create the subscriptions
         """
         # Discover files that are in cooloff
-        if self.config.isOracle:
-            
-        else:
-            query = {'stale': 'ok'}
-            try:
-                files = self.db.loadView('AsyncTransfer', 'getFilesToRetry', query)['rows']
-            except Exception, e:
-                self.logger.exception('A problem occured when contacting couchDB to retrieve LFNs: %s' % e)
-                return
-            logging.info("Found %s files in cooloff" % len(files))
-            self.processRetries(files)
+        query = {'stale': 'ok'}
+        try:
+            files = self.db.loadView('AsyncTransfer', 'getFilesToRetry', query)['rows']
+        except Exception as e:
+            self.logger.exception('A problem occured when contacting \
+                                  couchDB to retrieve LFNs: %s' % e)
+            return
+        logging.info("Found %s files in cooloff" % len(files))
+        self.processRetries(files)
