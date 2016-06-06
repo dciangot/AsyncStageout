@@ -75,7 +75,16 @@ class TransferWorker:
         self.role = user[2]
         self.tfc_map = tfc_map
         self.config = config
-        self.dropbox_dir = '%s/dropbox/outputs' % self.config.componentDir
+        self.dropbox_dir = '%s/dropbox/outputs/%s' % (self.config.componentDir,self.user)
+        if not os.path.isdir(self.dropbox_dir):
+            try:
+                os.makedirs(self.dropbox_dir)
+            except OSError as e:
+                if e.errno == errno.EEXIST:
+                    pass
+                else:
+                    self.logger.error('Unknown error in mkdir' % e.errno)
+                    raise
         logging.basicConfig(level=config.log_level)
         self.logger = logging.getLogger('AsyncTransfer-Worker-%s' % self.user)
         formatter = getCommonLogFormatter(self.config)
@@ -96,8 +105,6 @@ class TransferWorker:
         # Set up a factory for loading plugins
         self.factory = WMFactory(self.config.pluginDir, namespace=self.config.pluginDir)
         self.commandTimeout = 1200
-        server = CouchServer(dburl=self.config.couch_instance, ckey=self.config.opsProxy, cert=self.config.opsProxy)
-        self.db = server.connectDatabase(self.config.files_database)
         config_server = CouchServer(dburl=self.config.config_couch_instance, ckey=self.config.opsProxy, cert=self.config.opsProxy)
         self.config_db = config_server.connectDatabase(self.config.config_database)
         self.fts_server_for_transfer = getFTServer("T1_UK_RAL", 'getRunningFTSserver', self.config_db, self.logger)
@@ -311,42 +318,46 @@ class TransferWorker:
             self.logger.debug("Valid %s" % self.validate_copyjob(copyjob))
             if not self.validate_copyjob(copyjob): continue
 
-            rest_copyjob = {
-                "params":{
-                    "bring_online": None,
-                    "verify_checksum": False,
-                    "copy_pin_lifetime": -1,
-                    "max_time_in_queue": self.config.max_h_in_queue,
-                    "job_metadata":{"issuer": "ASO"},
-                    "spacetoken": None,
-                    "source_spacetoken": None,
-                    "fail_nearline": False,
-                    "overwrite": True,
-                    "gridftp": None
-                    },
-                "files":[]
-                }
+	    try:
+		    rest_copyjob = {
+			"params":{
+			    "bring_online": None,
+			    "verify_checksum": False,
+			    "copy_pin_lifetime": -1,
+			    "max_time_in_queue": self.config.max_h_in_queue,
+			    "job_metadata":{"issuer": "ASO"},
+			    "spacetoken": None,
+			    "source_spacetoken": None,
+			    "fail_nearline": False,
+			    "overwrite": True,
+			    "gridftp": None
+			    },
+			"files":[]
+			}
 
-            for SrcDest in copyjob:
-                tempDict = {"sources": [], "metadata": None, "destinations": []}
+		    for SrcDest in copyjob:
+			tempDict = {"sources": [], "metadata": None, "destinations": []}
 
-                tempDict["sources"].append(SrcDest.split(" ")[0])
-                tempDict["destinations"].append(SrcDest.split(" ")[1])
-                rest_copyjob["files"].append(tempDict)
+			tempDict["sources"].append(SrcDest.split(" ")[0])
+			tempDict["destinations"].append(SrcDest.split(" ")[1])
+			rest_copyjob["files"].append(tempDict)
 
 
-            fts_job['userProxyPath'] = self.user_proxy
-            fts_job['LFNs'] = jobs_lfn[link]
-            fts_job['PFNs'] = jobs_pfn[link]
-            fts_job['FTSJobid'] = job_id
-            fts_job['files_id'] = fileId_list
-            fts_job['username'] = self.user
-            self.logger.debug("Creating json file %s in %s" % (fts_job, self.dropbox_dir))
-            ftsjob_file = open('%s/Monitor.%s.json' % (self.dropbox_dir, fts_job['FTSJobid']), 'w')
-            jsondata = json.dumps(fts_job)
-            ftsjob_file.write(jsondata)
-            ftsjob_file.close()
-            self.logger.debug("%s ready." % fts_job)
+		    fts_job['userProxyPath'] = self.user_proxy
+		    fts_job['LFNs'] = jobs_lfn[link]
+		    fts_job['PFNs'] = jobs_pfn[link]
+		    fts_job['FTSJobid'] = getHashLfn(jobs_lfn[link][0])
+		    fts_job['files_id'] = [getHashLfn(x) for x in jobs_lfn[link]]
+		    fts_job['username'] = self.user
+		    self.logger.debug("Creating json file %s in %s" % (fts_job, self.dropbox_dir))
+		    ftsjob_file = open('%s/Monitor.%s.json' % (self.dropbox_dir, fts_job['FTSJobid']), 'w')
+		    jsondata = json.dumps(fts_job)
+		    ftsjob_file.write(jsondata)
+		    ftsjob_file.close()
+		    self.logger.debug("%s ready." % fts_job)
+	    except Exception as ex:
+		self.logger.error("Error: %s" %ex)
+		raise
             # Prepare Dashboard report
             for lfn in fts_job['LFNs']:
                 lfn_report = {}

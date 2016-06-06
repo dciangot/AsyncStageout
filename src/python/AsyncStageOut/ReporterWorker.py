@@ -62,7 +62,7 @@ class ReporterWorker:
         """
         self.user = user
         self.config = config
-        self.dropbox_dir = '%s/dropbox/inputs' % self.config.componentDir
+        self.dropbox_dir = self.config.reporter_dir
         logging.basicConfig(level=config.log_level)
         self.logger = logging.getLogger('AsyncTransfer-Reporter-%s' % self.user)
         formatter = getCommonLogFormatter(self.config)
@@ -76,58 +76,11 @@ class ReporterWorker:
             self.cleanEnvironment = 'unset LD_LIBRARY_PATH; unset X509_USER_CERT; unset X509_USER_KEY;'
         # TODO: improve how the worker gets a log
         self.logger.debug("Trying to get DN")
-        try:
-            self.userDN = getDNFromUserName(self.user, self.logger)
-        except Exception, ex:
-            msg = "Error retrieving the user DN"
-            msg += str(ex)
-            msg += str(traceback.format_exc())
-            self.logger.error(msg)
-            self.init = False
-            return
-        if not self.userDN:
-            self.init = False
-            return
-        defaultDelegation = {
-                                  'logger': self.logger,
-                                  'credServerPath' : \
-                                      self.config.credentialDir,
-                                  # It will be moved to be getfrom couchDB
-                                  'myProxySvr': 'myproxy.cern.ch',
-                                  'min_time_left' : getattr(self.config, 'minTimeLeft', 36000),
-                                  'serverDN' : self.config.serverDN,
-                                  'uisource' : self.uiSetupScript,
-                                  'cleanEnvironment' : getattr(self.config, 'cleanEnvironment', False)
-                            }
-        if hasattr(self.config, "cache_area"):
-            try:
-                defaultDelegation['myproxyAccount'] = re.compile('https?://([^/]*)/.*').findall(self.config.cache_area)[0]
-            except IndexError:
-                self.logger.error('MyproxyAccount parameter cannot be retrieved from %s' % self.config.cache_area)
-                pass
-        if getattr(self.config, 'serviceCert', None):
-            defaultDelegation['server_cert'] = self.config.serviceCert
-        if getattr(self.config, 'serviceKey', None):
-            defaultDelegation['server_key'] = self.config.serviceKey
 
-        self.valid = False
-        try:
-            self.valid, proxy = getProxy(self.userDN, "", "", defaultDelegation, self.logger)
-        except Exception, ex:
-            msg = "Error getting the user proxy"
-            msg += str(ex)
-            msg += str(traceback.format_exc())
-            self.logger.error(msg)
+        self.userDN = 'testME'
 
-        if self.valid:
-            self.userProxy = proxy
-        else:
-            # Use the operator's proxy when the user proxy in invalid.
-            # This will be moved soon
-            self.logger.error('Did not get valid proxy. Setting proxy to ops proxy')
-            self.userProxy = config.opsProxy
-
-
+        self.valid = True
+        self.userProxy = config.opsProxy
         try:
             self.oracleDB = HTTPRequests(self.config.oracleDB,
                                   config.opsProxy,
@@ -141,8 +94,6 @@ class ReporterWorker:
         self.max_retry = config.max_retry
         # Proxy management in Couch
         os.environ['X509_USER_PROXY'] = self.userProxy
-        server = CouchServer(dburl=self.config.couch_instance, ckey=self.config.opsProxy, cert=self.config.opsProxy)
-        self.db = server.connectDatabase(self.config.files_database)
         config_server = CouchServer(dburl=self.config.config_couch_instance, ckey=self.config.opsProxy, cert=self.config.opsProxy)
         self.config_db = config_server.connectDatabase(self.config.config_database)
 

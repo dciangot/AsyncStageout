@@ -62,7 +62,7 @@ class ReporterDaemon(BaseDaemon):
         self.pool = Pool(processes=self.config.pool_size)
         # Set up a factory for loading plugins
         self.factory = WMFactory(self.config.schedAlgoDir, namespace = self.config.schedAlgoDir)
-        self.dropbox_dir = '%s/dropbox/inputs' % self.config.componentDir
+        self.dropbox_dir = self.config.reporter_dir
         if not os.path.isdir(self.dropbox_dir):
             try:
                 os.makedirs(self.dropbox_dir)
