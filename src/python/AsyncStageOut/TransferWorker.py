@@ -91,26 +91,7 @@ class TransferWorker:
         if getattr(self.config, 'cleanEnvironment', False):
             self.cleanEnvironment = 'unset LD_LIBRARY_PATH; unset X509_USER_CERT; unset X509_USER_KEY;'
         self.logger.debug("Trying to get DN for %s" % self.user)
-        try:
-            self.userDN = getDNFromUserName(self.user, self.logger, ckey=self.config.opsProxy, cert=self.config.opsProxy)
-        except Exception as ex:
-            msg = "Error retrieving the user DN"
-            msg += str(ex)
-            msg += str(traceback.format_exc())
-            self.logger.error(msg)
-            self.init = False
-            return
-        if not self.userDN:
-            self.init = False
-            return
-        defaultDelegation = {'logger': self.logger,
-                             'credServerPath' : self.config.credentialDir,
-                             # It will be moved to be getfrom couchDB
-                             'myProxySvr': 'myproxy.cern.ch',
-                             'min_time_left' : getattr(self.config, 'minTimeLeft', 36000),
-                             'serverDN' : self.config.serverDN,
-                             'uisource' : self.uiSetupScript,
-                             'cleanEnvironment' : getattr(self.config, 'cleanEnvironment', False)}
+        self.userDN = 'imaDummyDNfor/%s' %self.user
 
         # Set up a factory for loading plugins
         self.factory = WMFactory(self.config.pluginDir, namespace=self.config.pluginDir)
@@ -120,46 +101,13 @@ class TransferWorker:
         config_server = CouchServer(dburl=self.config.config_couch_instance, ckey=self.config.opsProxy, cert=self.config.opsProxy)
         self.config_db = config_server.connectDatabase(self.config.config_database)
         self.fts_server_for_transfer = getFTServer("T1_UK_RAL", 'getRunningFTSserver', self.config_db, self.logger)
+        self.valid_proxy = True
+        self.user_proxy = self.config.opsProxy
 
         self.oracleDB = HTTPRequests(self.config.oracleDB,
                               self.config.opsProxy,
                               self.config.opsProxy)
 
-        self.cache_area=""
-        if hasattr(self.config, "cache_area"):
-            self.cache_area = self.config.cache_area
-        if not self.config.isOracle:
-            query = {'key':self.user}
-
-            try:
-                self.user_cache_area = self.db.loadView('DBSPublisher', 'cache_area', query)['rows']
-                self.cache_area = "https://"+self.user_cache_area[0]['value'][0]+self.user_cache_area[0]['value'][1]+"/filemetadata"
-            except Exception as ex:
-                msg = "Error getting user cache_area."
-                msg += str(ex)
-                msg += str(traceback.format_exc())
-                self.logger.error(msg)
-                pass
-        try:
-            defaultDelegation['myproxyAccount'] = re.compile('https?://([^/]*)/.*').findall(self.cache_area)[0]
-        except IndexError:
-            self.logger.error('MyproxyAccount parameter cannot be retrieved from %s . ' % (self.config.cache_area))
-        if getattr(self.config, 'serviceCert', None):
-            defaultDelegation['server_cert'] = self.config.serviceCert
-        if getattr(self.config, 'serviceKey', None):
-            defaultDelegation['server_key'] = self.config.serviceKey
-        self.valid_proxy = False
-        self.user_proxy = self.config.opsProxy
-        try:
-            defaultDelegation['userDN'] = self.userDN
-            defaultDelegation['group'] = self.group
-            defaultDelegation['role'] = self.role
-            self.valid_proxy, self.user_proxy = getProxy(defaultDelegation, self.logger)
-        except Exception as ex:
-            msg = "Error getting the user proxy"
-            msg += str(ex)
-            msg += str(traceback.format_exc())
-            self.logger.error(msg)
 
 
     def __call__(self):
@@ -170,19 +118,10 @@ class TransferWorker:
         """
         stdout, stderr, rc = None, None, 99999
         fts_url_delegation = self.fts_server_for_transfer.replace('8446', '8443')
-        if self.user_proxy:
-            command = 'export X509_USER_PROXY=%s ; source %s ; %s -s %s' % (self.user_proxy, self.uiSetupScript,
-                                                                            'glite-delegation-init', fts_url_delegation)
-            init_time = str(time.strftime("%a, %d %b %Y %H:%M:%S", time.localtime()))
-            self.logger.debug("executing command: %s at: %s for: %s" % (command, init_time, self.userDN))
-            stdout, rc = execute_command(command, self.logger, self.commandTimeout)
-        if not rc or not self.valid_proxy:
-            jobs, jobs_lfn, jobs_pfn, jobs_report = self.files_for_transfer()
-            self.logger.debug("Processing files for %s " %self.user_proxy)
-            if jobs:
-                self.command(jobs, jobs_lfn, jobs_pfn, jobs_report)
-        else:
-            self.logger.debug("User proxy of %s could not be delagated! Trying next time." % self.user)
+        jobs, jobs_lfn, jobs_pfn, jobs_report = self.files_for_transfer()
+        self.logger.debug("Processing files for %s " %self.user_proxy)
+        if jobs:
+	   self.command(jobs, jobs_lfn, jobs_pfn, jobs_report)
         self.logger.info('Transfers completed')
         return
 
@@ -396,84 +335,6 @@ class TransferWorker:
                 rest_copyjob["files"].append(tempDict)
 
 
-            self.logger.debug("Subbmitting this REST copyjob %s" % rest_copyjob)
-            url = self.fts_server_for_transfer + '/jobs'
-            self.logger.debug("Running FTS submission command")
-            self.logger.debug("FTS server: %s" % self.fts_server_for_transfer)
-            self.logger.debug("link: %s -> %s" % link)
-            heade = {"Content-Type ":"application/json"}
-            buf = StringIO.StringIO()
-            try:
-                connection = RequestHandler(config={'timeout': 300, 'connecttimeout' : 300})
-            except Exception as ex:
-                msg = str(ex)
-                msg += str(traceback.format_exc())
-                self.logger.debug(msg)
-            try:
-                response, datares = connection.request(url, rest_copyjob, heade, verb='POST', doseq=True, ckey=self.user_proxy, \
-                                                       cert=self.user_proxy, capath='/etc/grid-security/certificates', \
-                                                       cainfo=self.user_proxy, verbose=True)
-                self.logger.debug("Submission done")
-                self.logger.debug('Submission header status: %s' % response.status)
-                self.logger.debug('Submission header reason: %s' % response.reason)
-                self.logger.debug('Submission result %s' %  datares)
-            except Exception as ex:
-                msg = "Error submitting to FTS: %s " % url
-                msg += str(ex)
-                msg += str(traceback.format_exc())
-                self.logger.debug(msg)
-                failure_reasons.append(msg)
-                submission_error = True
-            buf.close()
-            if not submission_error:
-                res = {}
-                try:
-                    res = json.loads(datares)
-                except Exception as ex:
-                    msg = "Couldn't load submission acknowledgment from FTS"
-                    msg += str(ex)
-                    msg += str(traceback.format_exc())
-                    self.logger.debug(msg)
-                    submission_error = True
-                    failure_reasons.append(msg)
-                if 'job_id' in res:
-                    fileId_list = []
-                    files_res = []
-                    files_ = {}
-                    job_id = res['job_id']
-                    file_url = self.fts_server_for_transfer + '/jobs/' + job_id +'/files'
-                    self.logger.debug("Submitting to %s" % file_url)
-                    file_buf = StringIO.StringIO()
-                    try:
-                        response, files_ = connection.request(file_url, {}, heade, doseq=True, ckey=self.user_proxy, \
-                                                              cert=self.user_proxy, capath='/etc/grid-security/certificates', \
-                                                              cainfo=self.user_proxy, verbose=True)
-                        files_res = json.loads(files_)
-                    except Exception as ex:
-                        msg = "Error contacting FTS to retrieve file: %s " % file_url
-                        msg += str(ex)
-                        msg += str(traceback.format_exc())
-                        self.logger.debug(msg)
-                        submission_error = True
-                        failure_reasons.append(msg)
-                    self.logger.debug("List files in job %s" % files_)
-                    file_buf.close()
-                    for file_in_job in files_res:
-                        if 'file_id' in file_in_job:
-                            fileId_list.append(file_in_job['file_id'])
-                        else:
-                            msg = "Could not load submitted file %s from FTS" % file_url
-                            self.logger.debug(msg)
-                            submission_error = True
-                            failure_reasons.append(msg)
-                    self.logger.debug("File id list %s" % fileId_list)
-            if submission_error:
-                self.logger.debug("Submission failed")
-                self.logger.info("Mark failed %s files" % len(jobs_lfn[link]))
-                self.logger.debug("Mark failed %s files" % jobs_lfn[link])
-                failed_files = self.mark_failed(jobs_lfn[link], force_fail=False, submission_error=True, failure_reasons=failure_reasons)
-                self.logger.info("Marked failed %s" % len(failed_files))
-                continue
             fts_job['userProxyPath'] = self.user_proxy
             fts_job['LFNs'] = jobs_lfn[link]
             fts_job['PFNs'] = jobs_pfn[link]

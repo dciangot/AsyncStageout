@@ -1,0 +1,115 @@
+#pylint: disable=C0103,W0105
+
+"""
+Here's the algorithm
+
+
+"""
+
+from WMCore.WorkerThreads.BaseWorkerThread import BaseWorkerThread
+from WMCore.WMFactory import WMFactory
+from AsyncStageOut.MonitorWorker import MonitorWorker
+
+import logging
+import os
+from multiprocessing import Pool
+
+result_list = []
+current_running = []
+
+
+def monitor(user, split, list_job, config):
+    """
+    Each worker executes this function.
+    """
+    logging.debug("Trying to start the worker")
+    try:
+        worker = MonitorWorker(user, split, list_job, config)
+    except Exception as ex:
+        logging.debug("Worker cannot be created!: %s" %ex)
+        return
+    logging.debug("Worker created and init %s" % worker.init)
+    if worker.init:
+        logging.debug("Starting %s" %worker)
+        try:
+            worker()
+        except Exception as ex:
+            logging.debug("Worker cannot start!: %s" %ex)
+            return
+    else:
+        logging.debug("Worker cannot be initialized!")
+    return user+'/%s' % split
+
+
+def log_result(result):
+    """
+    Each worker executes this callback.
+    """
+    result_list.append(result)
+    current_running.remove(result)
+
+
+class MonitorDaemon(BaseWorkerThread):
+    """
+    _TransferDaemon_
+    Call multiprocessing library to instantiate a MonitorWorker for each job.
+    """
+    def __init__(self, config):
+        """
+        Initialise class members
+        """
+        BaseWorkerThread.__init__(self)
+        self.logger.info('Configuration loaded1')
+
+        self.config = config.Monitor
+        try:
+            self.logger.setLevel(self.config.log_level)
+        except ():
+            import self.logger
+            self.logger = self.logger.getLogger()
+            self.logger.setLevel(self.config.log_level)
+
+        self.logger.debug('Configuration loaded')
+        self.dropbox_dir = '%s/dropbox/outputs' % self.config.componentDir
+        try:
+            os.path.isdir(self.dropbox_dir)
+        except():
+            self.logger.error('dropbox dir not foud')
+            raise
+        self.pool = Pool(processes=self.config.pool_size)
+        self.factory = WMFactory(self.config.schedAlgoDir, namespace = self.config.schedAlgoDir)
+
+    def algorithm(self, parameters=None):
+        """
+
+        """
+        files = os.listdir(self.config.outputdir)
+
+        size = len(files)
+
+        users = files
+        self.logger.debug('Number of monitor active threads: %s' % len(current_running))
+
+        for user in users:
+            files = os.listdir(self.config.outputdir+'/%s'  % user)
+            if len(files) > 0:
+                files_ = files[:self.config.max_jobs_per_user]
+                self.logger.debug('Split numbers: %s. files: %s' % (len(files_)//self.config.jobs_per_thread+1, files))
+                for split in range(0, len(files_)//self.config.jobs_per_thread+1):
+                    user_s = user+'/%s' % split
+                    self.logger.debug('Split from: %s to %s' % (split*self.config.jobs_per_thread,(split+1)*self.config.jobs_per_thread))	
+                    start_ = split*self.config.jobs_per_thread
+                    end_ = (split+1)*self.config.jobs_per_thread	
+                    files = files_[split*self.config.jobs_per_thread:(split+1)*self.config.jobs_per_thread]
+                    self.logger.debug('Split: %s. files: %s' % (split, files))	
+                    if user_s not in current_running:
+                        self.logger.debug('Starting monitor for %s\'s jobs, split %s' % (user, split))
+                        current_running.append(user_s)
+                        self.pool.apply_async(monitor, (user, split, files, self.config), callback=log_result)
+
+    def terminate(self, parameters = None):
+        """
+        Called when thread is being terminated.
+        """
+        self.pool.close()
+        self.pool.join()
