@@ -89,10 +89,6 @@ class TransferDaemon(BaseDaemon):
                                      self.config.opsProxy,
                                      self.config.opsProxy)
 
-        server = CouchServer(dburl=self.config.couch_instance,
-                             ckey=self.config.opsProxy,
-                             cert=self.config.opsProxy)
-        self.db = server.connectDatabase(self.config.files_database)
         cfg_server = CouchServer(dburl=self.config.config_couch_instance)
         self.config_db = cfg_server.connectDatabase(self.config.config_database)
         self.logger.debug('Connected to CouchDB')
