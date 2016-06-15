@@ -183,27 +183,17 @@ class TransferDaemon(BaseDaemon):
                               from oracleDB: %s" %ex)
 
         result = oracleOutputMapping(results)
-        if len(result) <= self.config.pool_size:
-            def user_map(inputDict):
-                """
-                map user
-                """
-                outDict = [inputDict['username'], inputDict['user_group'],
-                           inputDict['user_role'],
-                           inputDict['destination'], inputDict['source']]
-                return outDict
+        def user_map(inputDict):
+            """
+            map user
+            """
+            outDict = [inputDict['username'], inputDict['user_group'],
+                       inputDict['user_role'],
+                       inputDict['destination'], inputDict['source']]
+            return outDict
 
-            active_users = map(user_map, result)
+        active_users = map(user_map, result)
 
-        else:
-            sorted_users = self.factory.loadObject(self.config.algoName,
-                                                   args=[self.config,
-                                                         self.logger,
-                                                         result['result'],
-                                                         self.config.pool_size],
-                                                   getFromCache=False,
-                                                   listFlag=True)
-            active_users = sorted_users()[:self.config.pool_size]
         self.logger.info('%s active users' % len(active_users))
         self.logger.debug('Active users are: %s' % active_users)
 
