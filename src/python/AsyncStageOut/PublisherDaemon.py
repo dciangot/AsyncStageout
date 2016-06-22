@@ -81,7 +81,10 @@ class PublisherDaemon(BaseDaemon):
         2. For each user get a suitably sized input for publish
         3. Submit the publish to a subprocess
         """
-        users = self.active_users(self.db)
+	if self.config.isOracle:
+	    users = self.active_users(self.oracleDB)
+	else:
+            users = self.active_users(self.db)
         self.logger.debug('kicking off pool %s' %users)
         for u in users:
             self.logger.debug('current_running %s' %current_running)
@@ -105,15 +108,16 @@ class PublisherDaemon(BaseDaemon):
             fileDoc['asoworker'] = self.config.asoworker
             fileDoc['subresource'] = 'acquirePublication'
 
-            self.logger.debug("Retrieving puclications from oracleDB")
+            self.logger.debug("Retrieving publications from oracleDB")
 
+	    results = ''
             try:
                 results = db.post(self.config.oracleFileTrans,
                                   data=encodeRequest(fileDoc))
             except Exception as ex:
                 self.logger.error("Failed to acquire publications \
                                   from oracleDB: %s" %ex)
-
+                
             fileDoc = {}
             fileDoc['asoworker'] = self.config.asoworker
             fileDoc['subresource'] = 'acquiredPublication'
@@ -129,9 +133,9 @@ class PublisherDaemon(BaseDaemon):
                                   from oracleDB: %s" %ex)
 
             result = oracleOutputMapping(results)
-
+            self.logger.debug("Results: %s" %result)
             #TODO: join query for publisher (same of submitter)
-            return [result['username'],result['group'],result['role']]
+            return [[x['username'],x['user_group'],x['user_role']] for x in result ]
         else:
             #TODO: Remove stale=ok for now until tested
             #query = {'group': True, 'group_level': 3, 'stale': 'ok'}

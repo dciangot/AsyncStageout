@@ -1,5 +1,4 @@
-#!/usr/bin/env
-#pylint: disable=C0103,W0105,broad-except,logging-not-lazy,bad-builtin
+#!/usr/bin/ent: disable=C0103,W0105,broad-except,logging-not-lazy,bad-builtin
 '''
 The TransferWorker does the following:
 
@@ -119,7 +118,8 @@ class TransferWorker:
         self.db = server.connectDatabase(self.config.files_database)
         config_server = CouchServer(dburl=self.config.config_couch_instance, ckey=self.config.opsProxy, cert=self.config.opsProxy)
         self.config_db = config_server.connectDatabase(self.config.config_database)
-        self.fts_server_for_transfer = getFTServer("T1_UK_RAL", 'getRunningFTSserver', self.config_db, self.logger)
+#        self.fts_server_for_transfer = getFTServer("T1_UK_RAL", 'getRunningFTSserver', self.config_db, self.logger)
+	self.fts_server_for_transfer = 'https://fts3-pilot.cern.ch:8446'
 
         self.oracleDB = HTTPRequests(self.config.oracleDB,
                               self.config.opsProxy,
@@ -154,6 +154,7 @@ class TransferWorker:
             defaultDelegation['userDN'] = self.userDN
             defaultDelegation['group'] = self.group
             defaultDelegation['role'] = self.role
+	    self.logger.debug('delegation: %s' %defaultDelegation)
             self.valid_proxy, self.user_proxy = getProxy(defaultDelegation, self.logger)
         except Exception as ex:
             msg = "Error getting the user proxy"
@@ -235,12 +236,16 @@ class TransferWorker:
             for (source, destination) in source_dests:
                 self.logger.info('%s %s' % (docs[0]['destination'],destination))
                 if self.config.isOracle:
+		    if self.group == '':
+			group = None
+	            if self.role == '':
+			role = None 	
                     active_docs = [x for x in docs
                                    if  x['destination']==destination
                                    and x['source']==source
                                    and x['username']==self.user
-                                   and x['user_group']==self.group
-                                   and x['user_role']==self.role
+                                   and x['user_group']==group
+                                   and x['user_role']==role
                                   ]
                     self.logger.info('%s' % active_docs)
                     def map_active(inputdoc):
@@ -254,7 +259,7 @@ class TransferWorker:
                                           inputdoc['destination'],
                                           inputdoc['source'],
                                           inputdoc['id']]
-                        outDict['value'] = [inputdoc['destination_lfn'], inputdoc['source_lfn']]
+                        outDict['value'] = [inputdoc['source_lfn'], inputdoc['destination_lfn']]
                         return outDict
                     active_files = [map_active(x) for x in active_docs]
                     self.logger.debug('%s has %s files to transfer \
@@ -282,9 +287,9 @@ class TransferWorker:
                 # take these active files and make a copyjob entry
                 def tfc_map(item):
                     self.logger.debug('Preparing PFNs...')
-                    source_pfn = self.apply_tfc_to_lfn('%s:%s' % (source, item['value'][0]))
-                    destination_pfn = self.apply_tfc_to_lfn('%s:%s' % (destination, item['value'][1]))
-                    self.logger.debug('PFNs prepared...')
+                    source_pfn = self.apply_tfc_to_lfn('%s:%s' % (source, item['value'][1]))
+                    destination_pfn = self.apply_tfc_to_lfn('%s:%s' % (destination, item['value'][0]))
+                    self.logger.debug('PFNs prepared... %s %s' %(destination_pfn,source_pfn))
                     if source_pfn and destination_pfn and self.valid_proxy:
                         try:
                             acquired_file, dashboard_report = self.mark_acquired([item])
@@ -305,7 +310,7 @@ class TransferWorker:
                             pass
                     else:
                         self.mark_failed([item])
-                self.logger.debug('Preparing job... %s' % len(active_files))
+                self.logger.debug('Preparing job... %s' % (active_files))
                 map(tfc_map, active_files)
                 self.logger.debug('Job prepared...')
                 if new_job:
@@ -523,6 +528,7 @@ class TransferWorker:
         if self.config.isOracle:
             for lfn in files:
                 if lfn['value'][0].find('temp') == 7:
+        	    self.logger.debug("Marking acquired %s" % lfn)
                     docId = lfn['key'][5]
                     self.logger.debug("Marking acquired %s" % docId)
                     try:
@@ -544,7 +550,7 @@ class TransferWorker:
                     dash_rep = (document['jobid'], document['job_retry_count'], document['taskname'])
                     self.logger.debug("Marked acquired %s of %s" % (docId, lfn))
                     ## TODO: no need of mark good right? the postjob should updated the status in case of direct stageout I think
-                    return lfn_in_transfer, dash_rep
+            return lfn_in_transfer, dash_rep
         else:
             for lfn in files:
                 if lfn['value'][0].find('temp') == 7:
@@ -645,7 +651,7 @@ class TransferWorker:
 
             # Load document and get the retry_count
             if self.config.isOracle:
-                docId = lfn['key'][5]
+                docId = getHashLfn(temp_lfn)
                 self.logger.debug("Marking failed %s" % docId)
                 try:
                     docbyId = self.oracleDB.get('/crabserver/dev/fileusertransfers',

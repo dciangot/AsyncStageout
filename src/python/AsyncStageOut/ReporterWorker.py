@@ -306,6 +306,7 @@ class ReporterWorker:
         updated_lfn = []
         for lfn in files:
             data = {}
+	    self.logger.debug("Document: %s" %lfn)
             if not isinstance(lfn, dict):
                 if 'temp' not in lfn:
                     temp_lfn = lfn.replace('store', 'store/temp', 1)
@@ -320,10 +321,10 @@ class ReporterWorker:
             # Load document to get the retry_count
             if self.config.isOracle:
                 try:
+                    self.logger.debug("Document: %s" %docId)
                     docbyId = self.oracleDB.get('/crabserver/dev/fileusertransfers',
                                                 data=encodeRequest({'subresource': 'getById', 'id': docId}))
-                    document = oracleOutputMapping(docbyId, None)[0]
-                    self.logger.debug("Document: %s" % document)
+                    document = oracleOutputMapping(docbyId)[0]
                     data = {}
                     data['asoworker'] = self.config.asoworker
                     data['subresource'] = 'updateTransfers'

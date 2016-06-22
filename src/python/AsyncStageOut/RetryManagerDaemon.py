@@ -103,12 +103,14 @@ class RetryManagerDaemon(BaseDaemon):
             fileDoc['asoworker'] = self.config.asoworker
             fileDoc['subresource'] = 'retryTransfers'
             fileDoc['time_to'] = self.cooloffTime
+	    self.logger.debug('fileDoc: %s' %fileDoc)	
             try:
                 results = self.oracleDB.post(self.config.oracleFileTrans,
                                              data=encodeRequest(fileDoc))
             except Exception as ex:
                 self.logger.error("Failed to get retry transfers \
                                   in oracleDB: %s" %ex)
+	    logging.info("Retried files in cooloff: %s" %str(results))	
         else:
             self.doRetries()
 

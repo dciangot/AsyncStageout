@@ -135,8 +135,14 @@ class PublisherWorker:
         try:
             if not os.getenv("TEST_ASO"):
                 defaultDelegation['userDN'] = self.userDN
-                defaultDelegation['group'] = self.group
-                defaultDelegation['role'] = self.role
+		if self.group == None:
+                    defaultDelegation['group'] = ''
+	 	else:
+		    defaultDelegation['group'] = self.group
+		if self.role == None:
+		    defaultDelegation['role'] = ''
+		else:
+                    defaultDelegation['role'] = self.role
                 valid, proxy = getProxy(defaultDelegation, self.logger)
         except Exception as ex:
             msg = "Error getting the user proxy"
@@ -191,6 +197,7 @@ class PublisherWorker:
         ## publish (i.e. the file has been transferred, but not yet published -nor its
         ## publication has failed-). We call them "active" files.
         active_user_workflows = []
+        now = int(time.time()) - time.timezone
         if self.config.isOracle:
             fileDoc = {}
             fileDoc['asoworker'] = self.config.asoworker
@@ -202,13 +209,14 @@ class PublisherWorker:
                 results = self.oracleDB.get(self.config.oracleFileTrans,
                                             data=encodeRequest(fileDoc))
                 toPub_docs = oracleOutputMapping(results)
-                active_user_workflows = list(set([{'key': [x['username'],
-                                                           x['group'],
-                                                           x['role'],
+                self.logger.info('toPub_docs for %s' % toPub_docs)  
+                active_user_workflows = [{'key': [x['username'],
+                                                           x['user_group'],
+                                                           x['user_role'],
                                                            x['taskname']
-                                                          ]
+                                                          ]}
                                                    for x in toPub_docs
-                                                  }]))
+                                        ]
             except Exception as ex:
                 self.logger.error("Failed to get acquired publications \
                                   from oracleDB: %s" %ex)
@@ -224,21 +232,22 @@ class PublisherWorker:
                 return
             self.logger.debug('active user wfs: %s' % active_user_workflows)
             self.logger.info('number of active user wfs: %s' % len(active_user_workflows))
-            now = time.time()
         ## Loop over the user workflows
         if self.config.isOracle:
             active_ = [{'key': [x['username'],
-                                x['group'],
-                                x['role'],
+                                x['user_group'],
+                                x['user_role'],
                                 x['taskname']],
                         'value': [x['destination'],
                                   x['source_lfn'],
                                   x['destination_lfn'],
                                   x['input_dataset'],
                                   x['dbs_url'],
-                                  x['end_time']
+                                  x['last_update']
                                  ]}
                        for x in toPub_docs]
+            self.logger.debug("ACTIVE_: %s" %active_)
+        self.logger.debug("active_user_workflows: %s" %active_user_workflows)
 
         for user_wf in active_user_workflows:
             workflow = str(user_wf['key'][3])
@@ -274,47 +283,53 @@ class PublisherWorker:
             pnn, input_dataset, input_dbs_url = "", "", ""
             for active_file in active_files:
                 job_end_time = active_file['value'][5]
-                if job_end_time:
-                    wf_jobs_endtime.append(int(time.mktime(time.strptime(str(job_end_time), '%Y-%m-%d %H:%M:%S'))) - time.timezone)
-                source_lfn = active_file['value'][1]
-                dest_lfn = active_file['value'][2]
-                self.lfn_map[dest_lfn] = source_lfn
-                if not pnn or not input_dataset or not input_dbs_url:
-                    pnn = str(active_file['value'][0])
-                    input_dataset = str(active_file['value'][3])
-                    input_dbs_url = str(active_file['value'][4])
-                ## Group the destination LFNs by output dataset. We don't know the dataset names
-                ## yet, but we can use the fact that there is a one-to-one correspondence
-                ## between the original (without the jobid) filenames and the dataset names.
-                filename = os.path.basename(dest_lfn)
-                left_piece, jobid_fileext = filename.rsplit('_', 1)
-                if '.' in jobid_fileext:
-                    fileext = jobid_fileext.rsplit('.', 1)[-1]
-                    orig_filename = left_piece + '.' + fileext
-                else:
-                    orig_filename = left_piece
-                lfn_ready.setdefault(orig_filename, []).append(dest_lfn)
-            msg = "There are %s ready files in %s active files." % (sum(map(len, lfn_ready.values())), user_wf['value'])
-            self.logger.info(wfnamemsg+msg)
-            msg = "List of jobs end time (len = %s): %s" % (len(wf_jobs_endtime), wf_jobs_endtime)
-            self.logger.debug(wfnamemsg+msg)
-            if wf_jobs_endtime:
-                wf_jobs_endtime.sort()
-                msg = "Oldest job end time: %s. Now: %s." % (wf_jobs_endtime[0], now)
-                self.logger.debug(wfnamemsg+msg)
-                workflow_duration = (now - wf_jobs_endtime[0])
-                workflow_expiration_time = self.config.workflow_expiration_time * 24*60*60
-                if workflow_duration > workflow_expiration_time:
-                    self.force_publication = True
-                    self.force_failure = True
-                    time_since_expiration = workflow_duration - workflow_expiration_time
-                    hours = int(time_since_expiration/60/60)
-                    minutes = int((time_since_expiration - hours*60*60)/60)
-                    seconds = int(time_since_expiration - hours*60*60 - minutes*60)
-                    self.publication_failure_msg = "Workflow %s expired since %sh:%sm:%ss!" % (workflow, hours, minutes, seconds)
-                    msg = self.publication_failure_msg
-                    msg += " Will force the publication if possible or fail it otherwise."
-                    self.logger.info(wfnamemsg+msg)
+		if job_end_time and self.config.isOracle:
+		    wf_jobs_endtime.append(int(job_end_time) - time.timezone)
+		elif job_end_time:
+		    wf_jobs_endtime.append(int(time.mktime(time.strptime(str(job_end_time), '%Y-%m-%d %H:%M:%S'))) - time.timezone)
+		source_lfn = active_file['value'][1]
+		dest_lfn = active_file['value'][2]
+		self.lfn_map[dest_lfn] = source_lfn
+		if not pnn or not input_dataset or not input_dbs_url:
+		    pnn = str(active_file['value'][0])
+		    input_dataset = str(active_file['value'][3])
+		    input_dbs_url = str(active_file['value'][4])
+		self.logger.debug("ACTIVE_: %s" %dest_lfn)
+		filename = os.path.basename(dest_lfn)
+		self.logger.debug("ACTIVE_: %s" %filename)
+		left_piece, jobid_fileext = filename.rsplit('_', 1)
+		if '.' in jobid_fileext:
+		    fileext = jobid_fileext.rsplit('.', 1)[-1]
+		    orig_filename = left_piece + '.' + fileext
+		else:
+		    orig_filename = left_piece
+		self.logger.debug("ACTIVE_: %s" %orig_filename)
+		lfn_ready.setdefault(orig_filename, []).append(dest_lfn)
+		self.logger.debug("ACTIVE_: %s" %lfn_ready)
+        #                msg = "There are %s ready files in %s active files." % (sum(map(len, lfn_ready.values())), user_wf['value'])
+           # self.logger.info(wfnamemsg+msg)
+	    try:
+		    msg = "List of jobs end time (len = %s): %s" % (len(wf_jobs_endtime), wf_jobs_endtime)
+		    self.logger.debug(wfnamemsg+msg)
+		    if wf_jobs_endtime:
+			wf_jobs_endtime.sort()
+			msg = "Oldest job end time: %s. Now: %s." % (wf_jobs_endtime[0], now)
+			self.logger.debug(wfnamemsg+msg)
+			workflow_duration = (now - int(wf_jobs_endtime[0]))
+			workflow_expiration_time = self.config.workflow_expiration_time * 24*60*60
+			if workflow_duration > workflow_expiration_time:
+			    self.force_publication = True
+			    self.force_failure = True
+			    time_since_expiration = workflow_duration - workflow_expiration_time
+			    hours = int(time_since_expiration/60/60)
+			    minutes = int((time_since_expiration - hours*60*60)/60)
+			    seconds = int(time_since_expiration - hours*60*60 - minutes*60)
+			    self.publication_failure_msg = "Workflow %s expired since %sh:%sm:%ss!" % (workflow, hours, minutes, seconds)
+			    msg = self.publication_failure_msg
+			    msg += " Will force the publication if possible or fail it otherwise."
+			    self.logger.info(wfnamemsg+msg)
+            except Exception as ex:
+		    self.logger.error(ex)
             ## List with the number of ready files per dataset.
             lens_lfn_ready = map(len, lfn_ready.values())
             msg = "Number of ready files per dataset: %s." % (lens_lfn_ready)

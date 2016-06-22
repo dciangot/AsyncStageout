@@ -144,6 +144,7 @@ class TransferDaemon(BaseDaemon):
         for site in sites:
             if site and str(site) != 'None' and str(site) != 'unknown':
                 site_tfc_map[site] = self.get_tfc_rules(site)
+		self.logger.debug('tfc site: %s %s' %(site, self.get_tfc_rules(site)))
         self.logger.debug('kicking off pool')
         for u in users:
             self.logger.debug('current_running %s' %current_running)
@@ -192,9 +193,14 @@ class TransferDaemon(BaseDaemon):
                 """
                 map user
                 """
+		if inputDict['user_role'] == None:
+			inputDict['user_role'] = ""
+		if inputDict['user_group'] == None:
+                        inputDict['user_group'] = ""
                 outDict = [inputDict['username'], inputDict['user_group'],
                            inputDict['user_role'],
                            inputDict['destination'], inputDict['source']]
+		self.logger.debug('outputdict: %s' %outDict)
                 return outDict
 
             active_users = map(user_map, result)
@@ -211,8 +217,11 @@ class TransferDaemon(BaseDaemon):
         self.logger.info('%s active users' % len(active_users))
         self.logger.debug('Active users are: %s' % active_users)
 
-        active_sites = [x['destination'] for x in result]
+        active_sites_dest = [x['destination'] for x in result]
+	active_sites = active_sites_dest + [x['source'] for x in result]
+	
 
+        self.logger.debug('Active sites are: %s' % active_sites)
         return list(set(active_sites)), active_users
 
     def active_users(self, db):
@@ -262,7 +271,7 @@ class TransferDaemon(BaseDaemon):
             """
             return inputDict['key']
 
-        return list(set(map(keys_map, sites['rows'])))
+        return map(keys_map, sites['rows'])
 
     def get_tfc_rules(self, site):
         """
