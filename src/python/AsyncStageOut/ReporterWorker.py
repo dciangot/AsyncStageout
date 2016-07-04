@@ -330,7 +330,7 @@ class ReporterWorker:
                     data['subresource'] = 'updateTransfers'
                     data['list_of_ids'] = docId
 
-                    if force_fail or document['transfer_retry_count'] > self.max_retry:
+                    if force_fail or document['transfer_retry_count'] >= self.max_retry:
                         data['list_of_transfer_state'] = 'FAILED'
                         data['list_of_retry_value'] = 1
                     else:

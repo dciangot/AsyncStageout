@@ -287,8 +287,8 @@ class TransferWorker:
                 # take these active files and make a copyjob entry
                 def tfc_map(item):
                     self.logger.debug('Preparing PFNs...')
-                    source_pfn = self.apply_tfc_to_lfn('%s:%s' % (source, item['value'][1]))
-                    destination_pfn = self.apply_tfc_to_lfn('%s:%s' % (destination, item['value'][0]))
+                    source_pfn = self.apply_tfc_to_lfn('%s:%s' % (source, item['value'][0]))
+                    destination_pfn = self.apply_tfc_to_lfn('%s:%s' % (destination, item['value'][1]))
                     self.logger.debug('PFNs prepared... %s %s' %(destination_pfn,source_pfn))
                     if source_pfn and destination_pfn and self.valid_proxy:
                         try:
@@ -667,7 +667,7 @@ class TransferWorker:
                 fileDoc['subresource'] = 'updateTransfers'
                 fileDoc['list_of_ids'] = docId 
 
-                if force_fail or document['transfer_retry_count'] > self.max_retry:
+                if force_fail or document['transfer_retry_count'] >= self.max_retry:
                     fileDoc['list_of_transfer_state'] = 'FAILED'
                     fileDoc['list_of_retry_value'] = 1
                 else:
