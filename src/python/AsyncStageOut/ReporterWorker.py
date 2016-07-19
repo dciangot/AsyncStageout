@@ -19,11 +19,14 @@ import urllib
 import logging
 import datetime
 import traceback
+import subprocess
 
 from WMCore.WMFactory import WMFactory
 from WMCore.Credential.Proxy import Proxy
 from WMCore.Database.CMSCouch import CouchServer
 
+from WMCore.Services.PhEDEx.PhEDEx import PhEDEx
+from WMCore.Storage.TrivialFileCatalog import readTFC
 from AsyncStageOut import getHashLfn
 from AsyncStageOut import getDNFromUserName
 from AsyncStageOut import getCommonLogFormatter
@@ -54,6 +57,37 @@ def getProxy(userdn, group, role, defaultDelegation, logger):
     return (False, None)
 
 
+def execute_command( command, logger, timeout ):
+    """
+    _execute_command_
+    Funtion to manage commands.
+    """
+
+    stdout, stderr, rc = None, None, 99999
+    proc = subprocess.Popen(
+            command, shell=True, cwd=os.environ['PWD'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.PIPE,
+    )
+    t_beginning = time.time()
+    seconds_passed = 0
+    while True:
+        if proc.poll() is not None:
+            break
+        seconds_passed = time.time() - t_beginning
+        if timeout and seconds_passed > timeout:
+            proc.terminate()
+            logger.error('Timeout in %s execution.' % command )
+            return rc, stdout, stderr
+
+        time.sleep(0.1)
+    stdout, stderr = proc.communicate()
+    rc = proc.returncode
+    logger.debug('Executing : \n command : %s\n output : %s\n error: %s\n retcode : %s' % (command, stdout, stderr, rc))
+    return rc, stdout, stderr
+
+
 class ReporterWorker:
 
     def __init__(self, user, config):
@@ -64,6 +98,7 @@ class ReporterWorker:
         self.config = config
         self.dropbox_dir = '%s/dropbox/inputs' % self.config.componentDir
         logging.basicConfig(level=config.log_level)
+        self.site_tfc_map = {}
         self.logger = logging.getLogger('AsyncTransfer-Reporter-%s' % self.user)
         formatter = getCommonLogFormatter(self.config)
         for handler in logging.getLogger().handlers:
@@ -146,6 +181,12 @@ class ReporterWorker:
         config_server = CouchServer(dburl=self.config.config_couch_instance, ckey=self.config.opsProxy, cert=self.config.opsProxy)
         self.config_db = config_server.connectDatabase(self.config.config_database)
 
+        try:
+            self.phedex = PhEDEx(responseType='xml',
+                                 dict={'key':self.config.opsProxy,
+                                       'cert':self.config.opsProxy})
+        except Exception as e:
+            self.logger.exception('PhEDEx exception: %s' % e)
 
     def __call__(self):
         """
@@ -235,12 +276,12 @@ class ReporterWorker:
             files_to_update.append(os.path.join(self.dropbox_dir, self.user, user_file))
         return files_to_update
 
-    def mark_good(self, files=[]):
+    def mark_good(self, files):
         """
         Mark the list of files as tranferred
         """
         updated_lfn = []
-        for lfn in files:
+        for it, lfn in enumerate(files):
             hash_lfn = getHashLfn(lfn)
             self.logger.info("Marking good %s" % hash_lfn)
             self.logger.debug("Marking good %s" % lfn)
@@ -263,6 +304,7 @@ class ReporterWorker:
                     data['asoworker'] = self.config.asoworker
                     data['subresource'] = 'updateTransfers'
                     data['list_of_ids'] = getHashLfn(lfn)
+                    docId = getHashLfn(lfn)
                     data['list_of_transfer_state'] = "DONE"
                     result = self.oracleDB.post('/crabserver/dev/filetransfers',
                                          data=encodeRequest(data))
@@ -282,7 +324,7 @@ class ReporterWorker:
                         updated_lfn.append(lfn)
                         self.logger.debug("Marked good %s" % lfn)
                     else: updated_lfn.append(lfn)
-            except Exception, ex:
+            except Exception as ex:
                 msg = "Error updating document"
                 msg += str(ex)
                 msg += str(traceback.format_exc())
@@ -296,8 +338,80 @@ class ReporterWorker:
                 msg += str(traceback.format_exc())
                 self.logger.error(msg)
                 continue
-        self.logger.debug("transferred file updated")
+            self.logger.info("Transferred file %s updated, removing now source file" %docId)
+            try:
+                docbyId = self.oracleDB.get('/crabserver/dev/fileusertransfers',
+                                            data=encodeRequest({'subresource': 'getById', 'id': docId}))
+                document = oracleOutputMapping(docbyId, None)[0]
+            except Exception as ex:
+                msg = "Error getting file from source"
+                self.logger.error(msg)
+                raise
+            if document["source"] not in self.site_tfc_map:
+                self.logger.debug("site not found... gathering info from phedex")
+                self.site_tfc_map[document["source"]] = self.get_tfc_rules(document["source"])
+            pfn = self.apply_tfc_to_lfn( '%s:%s' %(document["source"], lfn))
+            self.logger.debug("File has to be removed now from source site: %s" %pfn)
+            self.remove_files(self.userProxy, pfn)
+            self.logger.debug("Transferred file removed from source")
         return updated_lfn
+
+    def remove_files(self, userProxy, pfn):
+
+        command = 'env -i X509_USER_PROXY=%s gfal-rm -v -t 180 %s'  % \
+                  (userProxy, pfn)
+        logging.debug("Running remove command %s" % command)
+        try:
+            rc, stdout, stderr = execute_command(command, self.logger, 3600)
+        except Exception as ex:
+            self.logger.error(ex)
+            raise
+        if rc:
+            logging.info("Deletion command failed with output %s and error %s" %(stdout, stderr))
+        else:
+            logging.info("File Deleted.")
+        return
+
+    def get_tfc_rules(self, site):
+        """
+        Get the TFC regexp for a given site.
+        """
+        self.phedex.getNodeTFC(site)
+        try:
+            tfc_file = self.phedex.cacheFileName('tfc', inputdata={'node': site})
+        except Exception, e:
+            self.logger.exception('A problem occured when getting the TFC regexp: %s' % e)
+            return None
+        return readTFC(tfc_file)
+
+    def apply_tfc_to_lfn(self, file):
+        """
+        Take a CMS_NAME:lfn string and make a pfn.
+        Update pfn_to_lfn_mapping dictionary.
+        """
+        try:
+            site, lfn = tuple(file.split(':'))
+        except Exception, e:
+            self.logger.error('It does not seem to be an lfn %s' %file.split(':'))
+            return None
+        if site in self.site_tfc_map:
+            pfn = self.site_tfc_map[site].matchLFN('srmv2', lfn)
+            # TODO: improve fix for wrong tfc on sites
+            try:
+                if pfn.find("\\") != -1: pfn = pfn.replace("\\","")
+                if pfn.split(':')[0] != 'srm' and pfn.split(':')[0] != 'gsiftp' :
+                    self.logger.error('Broken tfc for file %s at site %s' % (lfn, site))
+                    return None
+            except IndexError:
+                self.logger.error('Broken tfc for file %s at site %s' % (lfn, site))
+                return None
+            except AttributeError:
+                self.logger.error('Broken tfc for file %s at site %s' % (lfn, site))
+                return None
+            return pfn
+        else:
+            self.logger.error('Wrong site %s!' % site)
+            return None
 
     def mark_failed(self, files=[], failures_reasons = [], force_fail = False ):
         """
@@ -332,14 +446,14 @@ class ReporterWorker:
 
                     if force_fail or document['transfer_retry_count'] + 1 > self.max_retry:
                         data['list_of_transfer_state'] = 'FAILED'
-                        data['list_of_retry_value'] = 1
+                        data['list_of_retry_value'] = 0
                     else:
                         data['list_of_transfer_state'] = 'RETRY'
                         fatal_error = self.determine_fatal_error(failures_reasons[files.index(lfn)])
                         if fatal_error:
                             data['list_of_transfer_state'] = 'FAILED'
                     data['list_of_failure_reason'] = failures_reasons[files.index(lfn)]
-                    data['list_of_retry_value'] = 1
+                    data['list_of_retry_value'] = 0
 
                     self.logger.debug("update: %s" % data)
                     result = self.oracleDB.post('/crabserver/dev/filetransfers',
