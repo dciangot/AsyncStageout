@@ -96,6 +96,7 @@ class ReporterWorker:
         """
         self.user = user
         self.config = config
+        self.kibana_file = open(self.config.kibana_dir+"/"+self.user+"/"+"ended.json", 'a')
         self.dropbox_dir = '%s/dropbox/inputs' % self.config.componentDir
         logging.basicConfig(level=config.log_level)
         self.site_tfc_map = {}
@@ -236,6 +237,12 @@ class ReporterWorker:
                             failure_reason.append(json_data['failure_reason'][i])
                         self.logger.debug('Marking failed %s %s' %(failed_lfns, failure_reason))
                         updated_failed_lfns = self.mark_failed(failed_lfns, failure_reason)
+
+                        try:
+                            self.kibana_file.write(str(time.time())+"\tFailed:\t"+str(len(updated_failed_lfns))+"\n")
+                        except Exception as ex:
+                            self.logger.error(ex)
+
                         if len(updated_failed_lfns) != len(failed_lfns):
                             remove_failed = False
 
@@ -248,6 +255,12 @@ class ReporterWorker:
                             good_lfns.append(json_data['LFNs'][i])
                         self.logger.info('Marking good %s' %(good_lfns))
                         updated_good_lfns = self.mark_good(good_lfns)
+
+                        try:
+                            self.kibana_file.write(str(time.time())+"\tFailed:\t"+str(len(updated_good_lfns))+"\n")
+                        except Exception as ex:
+                            self.logger.error(ex)
+
                         if len(updated_good_lfns) != len(good_lfns):
                             remove_good = False
 

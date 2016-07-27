@@ -13,7 +13,8 @@ Here's the algorithm
 import os
 import logging
 from multiprocessing import Pool
-
+import time
+import json
 from RESTInteractions import HTTPRequests
 from ServerUtilities import encodeRequest, oracleOutputMapping
 
@@ -58,6 +59,8 @@ def log_result(result):
     result_list.append(result)
     current_running.remove(result)
 
+
+
 class TransferDaemon(BaseDaemon):
     """
     _TransferDaemon_
@@ -75,6 +78,9 @@ class TransferDaemon(BaseDaemon):
         BaseDaemon.__init__(self, config, 'AsyncTransfer')
 
         self.dropbox_dir = '%s/dropbox/outputs' % self.config.componentDir
+
+        self.kibana_file = open(self.config.kibana_dir+"/"+"acquired.json", 'a')
+
         if not os.path.isdir(self.dropbox_dir):
             try:
                 os.makedirs(self.dropbox_dir)
@@ -85,14 +91,15 @@ class TransferDaemon(BaseDaemon):
                     self.logger.error('Unknown error in mkdir' % e.errno)
                     raise
 
-        self.oracleDB = HTTPRequests(self.config.oracleDB,
-                                     self.config.opsProxy,
-                                     self.config.opsProxy)
-
-        server = CouchServer(dburl=self.config.couch_instance,
-                             ckey=self.config.opsProxy,
-                             cert=self.config.opsProxy)
-        self.db = server.connectDatabase(self.config.files_database)
+        if self.config.isOracle:    
+            self.oracleDB = HTTPRequests(self.config.oracleDB,
+                                         self.config.opsProxy,
+                                         self.config.opsProxy)
+        else:
+            server = CouchServer(dburl=self.config.couch_instance,
+                                 ckey=self.config.opsProxy,
+                                 cert=self.config.opsProxy)
+            self.db = server.connectDatabase(self.config.files_database)
         cfg_server = CouchServer(dburl=self.config.config_couch_instance)
         self.config_db = cfg_server.connectDatabase(self.config.config_database)
         self.logger.debug('Connected to CouchDB')
@@ -117,6 +124,7 @@ class TransferDaemon(BaseDaemon):
         3. For each user get a suitably sized input for submission (call to a list)
         4. Submit to a subprocess
         """
+
         query = {'stale':'ok'}
         try:
             params = self.config_db.loadView('asynctransfer_config',
@@ -154,6 +162,15 @@ class TransferDaemon(BaseDaemon):
                 self.logger.debug('processing %s' %current_running)
                 self.pool.apply_async(ftscp, (u, site_tfc_map, self.config),
                                       callback=log_result)
+                if not os.path.isdir(self.config.kibana_dir+"/"+u[0]):
+                    try:
+                            os.makedirs(self.config.kibana_dir+"/"+u[0])
+                    except OSError as e:
+                        if e.errno == errno.EEXIST:
+                            pass
+                        else:
+                            self.logger.error('Unknown error in mkdir' % e.errno)
+                            raise
 
     def oracleSiteUser(self, db):
         """
@@ -172,6 +189,9 @@ class TransferDaemon(BaseDaemon):
         except Exception as ex:
             self.logger.error("Failed to acquire transfers \
                               from oracleDB: %s" %ex)
+            pass
+
+        self.doc_acq=str(result)
 
         fileDoc = {}
         fileDoc['asoworker'] = self.config.asoworker
@@ -183,46 +203,47 @@ class TransferDaemon(BaseDaemon):
         try:
             results = db.get(self.config.oracleFileTrans,
                              data=encodeRequest(fileDoc))
+            documents = oracleOutputMapping(results)
         except Exception as ex:
             self.logger.error("Failed to get acquired transfers \
                               from oracleDB: %s" %ex)
+            documents = {}
+            pass
 
-        result = oracleOutputMapping(results)
-        if len(result) <= self.config.pool_size:
-            def user_map(inputDict):
-                """
-                map user
-                """
-		if inputDict['user_role'] == None:
-			inputDict['user_role'] = ""
-		if inputDict['user_group'] == None:
-                        inputDict['user_group'] = ""
-                outDict = [inputDict['username'], inputDict['user_group'],
-                           inputDict['user_role'],
-                           inputDict['destination'], inputDict['source']]
-		self.logger.debug('outputdict: %s' %outDict)
-                return outDict
+        documents = oracleOutputMapping(results)
+       
+        for doc in documents:
+            if doc['user_role'] == None:
+                doc['user_role'] = ""
+            if doc['user_group'] == None:
+                doc['user_group'] = ""
+        
+        
+        try:
+            #unique_users = list(set([[x['username'], x['user_group'], x['user_role']]   for x in documents]))
+            unique_users = [list(i) for i in set(tuple([x['username'], x['user_group'], x['user_role']]) for x in documents)]                               
+        except Exception as ex:
+            self.logger.error("Failed to map active users: %s" %ex) 
 
-            active_users = map(user_map, result)
+        if len(unique_users) <= self.config.pool_size:
+            active_users = unique_users
+        else:  
+            active_users = unique_users[:self.config.pool_size]
 
-        else:
-            sorted_users = self.factory.loadObject(self.config.algoName,
-                                                   args=[self.config,
-                                                         self.logger,
-                                                         result['result'],
-                                                         self.config.pool_size],
-                                                   getFromCache=False,
-                                                   listFlag=True)
-            active_users = sorted_users()[:self.config.pool_size]
         self.logger.info('%s active users' % len(active_users))
         self.logger.debug('Active users are: %s' % active_users)
 
-        active_sites_dest = [x['destination'] for x in result]
-	active_sites = active_sites_dest + [x['source'] for x in result]
+        active_sites_dest = [x['destination'] for x in documents]
+        active_sites = active_sites_dest + [x['source'] for x in documents]
 	
+        try:
+            self.kibana_file.write(self.doc_acq+"\n")
+        except Exception as ex:
+            self.logger.error(ex)
 
         self.logger.debug('Active sites are: %s' % active_sites)
         return list(set(active_sites)), active_users
+
 
     def active_users(self, db):
         """

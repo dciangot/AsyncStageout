@@ -74,6 +74,7 @@ class TransferWorker:
         self.role = user[2]
         self.tfc_map = tfc_map
         self.config = config
+        self.kibana_file = open(self.config.kibana_dir+"/"+self.user+"/"+"submitted.json", 'a')
         self.dropbox_dir = '%s/dropbox/outputs' % self.config.componentDir
         logging.basicConfig(level=config.log_level)
         self.logger = logging.getLogger('AsyncTransfer-Worker-%s' % self.user)
@@ -119,7 +120,7 @@ class TransferWorker:
         config_server = CouchServer(dburl=self.config.config_couch_instance, ckey=self.config.opsProxy, cert=self.config.opsProxy)
         self.config_db = config_server.connectDatabase(self.config.config_database)
 #        self.fts_server_for_transfer = getFTServer("T1_UK_RAL", 'getRunningFTSserver', self.config_db, self.logger)
-	self.fts_server_for_transfer = 'https://fts3-pilot.cern.ch:8446'
+        self.fts_server_for_transfer = 'https://fts3-pilot.cern.ch:8446'
 
         self.oracleDB = HTTPRequests(self.config.oracleDB,
                               self.config.opsProxy,
@@ -154,7 +155,7 @@ class TransferWorker:
             defaultDelegation['userDN'] = self.userDN
             defaultDelegation['group'] = self.group
             defaultDelegation['role'] = self.role
-	    self.logger.debug('delegation: %s' %defaultDelegation)
+            self.logger.debug('delegation: %s' %defaultDelegation)
             self.valid_proxy, self.user_proxy = getProxy(defaultDelegation, self.logger)
         except Exception as ex:
             msg = "Error getting the user proxy"
@@ -492,6 +493,12 @@ class TransferWorker:
             ftsjob_file.close()
             self.logger.debug("%s ready." % fts_job)
             # Prepare Dashboard report
+
+            try:
+                self.kibana_file.write(str(time.time())+"\t"+str(len(fts_job['LFNs']))+"\t"+str(link)+"\n")
+            except Exception as ex:
+                self.logger.error(ex)
+
             for lfn in fts_job['LFNs']:
                 lfn_report = {}
                 lfn_report['FTSJobid'] = fts_job['FTSJobid']
@@ -503,12 +510,12 @@ class TransferWorker:
                 job_id = '%d_https://glidein.cern.ch/%d/%s_%s' % (int(jobs_report[link][index][0]), int(jobs_report[link][index][0]), lfn_report['Workflow'].replace("_", ":"), lfn_report['JobVersion'])
                 lfn_report['JobId'] = job_id
                 lfn_report['URL'] = self.fts_server_for_transfer
-                self.logger.debug("Creating json file %s in %s for FTS3 Dashboard" % (lfn_report, self.dropbox_dir))
-                dash_job_file = open('/tmp/Dashboard.%s.json' % getHashLfn(lfn_report['PFN']), 'w')
-                jsondata = json.dumps(lfn_report)
-                dash_job_file.write(jsondata)
-                dash_job_file.close()
-                self.logger.debug("%s ready for FTS Dashboard report." % lfn_report)
+             #   self.logger.debug("Creating json file %s in %s for FTS3 Dashboard" % (lfn_report, self.dropbox_dir))
+             #   dash_job_file = open('/tmp/Dashboard.%s.json' % getHashLfn(lfn_report['PFN']), 'w')
+             #   jsondata = json.dumps(lfn_report)
+             #   dash_job_file.write(jsondata)
+             #   dash_job_file.close()
+             #   self.logger.debug("%s ready for FTS Dashboard report." % lfn_report)
         return
 
     def validate_copyjob(self, copyjob):
@@ -528,7 +535,7 @@ class TransferWorker:
         if self.config.isOracle:
             for lfn in files:
                 if lfn['value'][0].find('temp') == 7:
-        	    self.logger.debug("Marking acquired %s" % lfn)
+                    self.logger.debug("Marking acquired %s" % lfn)
                     docId = lfn['key'][5]
                     self.logger.debug("Marking acquired %s" % docId)
                     try:
