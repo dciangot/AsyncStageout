@@ -31,7 +31,7 @@ from AsyncStageOut import getDNFromUserName
 from AsyncStageOut import getCommonLogFormatter
 
 from RESTInteractions import HTTPRequests
-from ServerUtilities import getHashLfn, generateTaskName,\
+from ServerUtilities import  generateTaskName,\
         PUBLICATIONDB_STATUSES, encodeRequest, oracleOutputMapping
 
 def execute_command(command, logger, timeout):
@@ -211,7 +211,6 @@ class TransferWorker:
         else:
             query = {'group': True,
                      'startkey':[self.user, self.group, self.role], 'endkey':[self.user, self.group, self.role, {}, {}]}
-                     #'stale': 'ok'}
             try:
                 sites = self.db.loadView(self.config.ftscp_design, 'ftscp_all', query)
             except:
@@ -237,10 +236,10 @@ class TransferWorker:
             for (source, destination) in source_dests:
                 self.logger.info('%s %s' % (docs[0]['destination'],destination))
                 if self.config.isOracle:
-		    if self.group == '':
-			group = None
-	            if self.role == '':
-			role = None 	
+                    if self.group == '':
+                        group = None
+                    if self.role == '':
+                        role = None 	
                     active_docs = [x for x in docs
                                    if  x['destination']==destination
                                    and x['source']==source
@@ -296,8 +295,8 @@ class TransferWorker:
                             acquired_file, dashboard_report = self.mark_acquired([item])
                             self.logger.debug('Files have been marked acquired')
                         except Exception as ex:
-                             self.logger.error("%s" % ex)
-                             raise
+                            self.logger.error("%s" % ex)
+                            raise
                         if acquired_file:
                             self.logger.debug('Starting FTS Job creation...')
                             # Prepare Monitor metadata
@@ -510,12 +509,12 @@ class TransferWorker:
                 job_id = '%d_https://glidein.cern.ch/%d/%s_%s' % (int(jobs_report[link][index][0]), int(jobs_report[link][index][0]), lfn_report['Workflow'].replace("_", ":"), lfn_report['JobVersion'])
                 lfn_report['JobId'] = job_id
                 lfn_report['URL'] = self.fts_server_for_transfer
-             #   self.logger.debug("Creating json file %s in %s for FTS3 Dashboard" % (lfn_report, self.dropbox_dir))
-             #   dash_job_file = open('/tmp/Dashboard.%s.json' % getHashLfn(lfn_report['PFN']), 'w')
-             #   jsondata = json.dumps(lfn_report)
-             #   dash_job_file.write(jsondata)
-             #   dash_job_file.close()
-             #   self.logger.debug("%s ready for FTS Dashboard report." % lfn_report)
+                self.logger.debug("Creating json file %s in %s for FTS3 Dashboard" % (lfn_report, self.dropbox_dir))
+                dash_job_file = open('/tmp/Dashboard.%s.json' % getHashLfn(lfn_report['PFN']), 'w')
+                jsondata = json.dumps(lfn_report)
+                dash_job_file.write(jsondata)
+                dash_job_file.close()
+                self.logger.debug("%s ready for FTS Dashboard report." % lfn_report)
         return
 
     def validate_copyjob(self, copyjob):
