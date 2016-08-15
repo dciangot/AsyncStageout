@@ -19,6 +19,7 @@ import datetime
 import StringIO
 import traceback
 import subprocess
+import itertools
 
 from WMCore.WMFactory import WMFactory
 from WMCore.Database.CMSCouch import CouchServer
@@ -204,6 +205,8 @@ class TransferWorker:
                                            data=encodeRequest(fileDoc))
                 result = oracleOutputMapping(results)
                 res = [[x['source'], x['destination']] for x in result]
+                res.sort()
+                res = list(k for k,_ in itertools.groupby(res))
             except Exception as ex:
                 self.logger.error("Failed to get acquired transfers \
                                   from oracleDB: %s" %ex)
@@ -235,12 +238,16 @@ class TransferWorker:
         self.logger.info('%s has %s links to transfer on: %s' % (self.user, len(source_dests), str(source_dests)))
         try:
             for (source, destination) in source_dests:
-                self.logger.info('%s %s' % (docs[0]['destination'],destination))
+                self.logger.info('dest1: %s source: %s' % (docs[0]['destination'],source))
                 if self.config.isOracle:
-		    if self.group == '':
-			group = None
-	            if self.role == '':
-			role = None 	
+                    if self.group == '':
+                        group = None
+                    else:
+                        group = self.group
+                    if self.role == '':
+                        role = None
+                    else:
+                        role = self.role
                     active_docs = [x for x in docs
                                    if  x['destination']==destination
                                    and x['source']==source
@@ -248,7 +255,7 @@ class TransferWorker:
                                    and x['user_group']==group
                                    and x['user_role']==role
                                   ]
-                    self.logger.info('%s' % active_docs)
+                    #self.logger.info('%s' % active_docs)
                     def map_active(inputdoc):
                         """
                         map active_users
@@ -311,7 +318,7 @@ class TransferWorker:
                             pass
                     else:
                         self.mark_failed([item])
-                self.logger.debug('Preparing job... %s' % (active_files))
+                #self.logger.debug('Preparing job... %s' % (active_files))
                 map(tfc_map, active_files)
                 self.logger.debug('Job prepared...')
                 if new_job:
@@ -539,7 +546,7 @@ class TransferWorker:
                     docId = lfn['key'][5]
                     self.logger.debug("Marking acquired %s" % docId)
                     try:
-                        docbyId = self.oracleDB.get('/crabserver/dev/fileusertransfers',
+                        docbyId = self.oracleDB.get(self.config.oracleFileTrans.replace('filetransfers','fileusertransfers'),
                                                     data=encodeRequest({'subresource': 'getById', 'id': docId}))
                         document = oracleOutputMapping(docbyId, None)[0]
                         fileDoc = {}
@@ -548,7 +555,7 @@ class TransferWorker:
                         fileDoc['list_of_ids'] = docId
                         fileDoc['list_of_transfer_state'] = "SUBMITTED"
 
-                        result = self.oracleDB.post('/crabserver/dev/filetransfers',
+                        result = self.oracleDB.post(self.config.oracleFileTrans,
                                              data=encodeRequest(fileDoc))
                     except Exception as ex:
                         self.logger.error("Error during status update: %s" %ex)
@@ -661,7 +668,7 @@ class TransferWorker:
                 docId = getHashLfn(temp_lfn)
                 self.logger.debug("Marking failed %s" % docId)
                 try:
-                    docbyId = self.oracleDB.get('/crabserver/dev/fileusertransfers',
+                    docbyId = self.oracleDB.get(self.config.oracleFileTrans,
                                                 data=encodeRequest({'subresource': 'getById', 'id': docId}))
                 except Exception as ex:
                     self.logger.error("Error updating failed docs: %s" %ex)
@@ -692,7 +699,7 @@ class TransferWorker:
                 self.logger.debug("update: %s" % fileDoc)
                 try:
                     updated_lfn.append(docId)
-                    result = self.oracleDB.post('/crabserver/dev/filetransfers',
+                    result = self.oracleDB.post(self.config.oracleFileTrans,
                                          data=encodeRequest(fileDoc))
                 except Exception as ex:
                     msg = "Error updating document"

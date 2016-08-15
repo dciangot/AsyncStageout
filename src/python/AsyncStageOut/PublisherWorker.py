@@ -209,13 +209,13 @@ class PublisherWorker:
                 results = self.oracleDB.get(self.config.oracleFileTrans,
                                             data=encodeRequest(fileDoc))
                 toPub_docs = oracleOutputMapping(results)
-                self.logger.info('toPub_docs for %s' % toPub_docs)  
+                #self.logger.info('toPub_docs for %s' % toPub_docs)  
                 active_user_workflows = [{'key': [x['username'],
                                                            x['user_group'],
                                                            x['user_role'],
                                                            x['taskname']
                                                           ]}
-                                                   for x in toPub_docs
+                                                   for x in toPub_docs if x['transfer_state']==3
                                         ]
             except Exception as ex:
                 self.logger.error("Failed to get acquired publications \
@@ -230,7 +230,7 @@ class PublisherWorker:
                                   to get the list of active WFs: %s' % ex)
                 self.logger.info('Publications for %s will be retried next time' % self.user)
                 return
-            self.logger.debug('active user wfs: %s' % active_user_workflows)
+        #    self.logger.debug('active user wfs: %s' % active_user_workflows)
             self.logger.info('number of active user wfs: %s' % len(active_user_workflows))
         ## Loop over the user workflows
         if self.config.isOracle:
@@ -245,9 +245,8 @@ class PublisherWorker:
                                   x['dbs_url'],
                                   x['last_update']
                                  ]}
-                       for x in toPub_docs]
-            self.logger.debug("ACTIVE_: %s" %active_)
-        self.logger.debug("active_user_workflows: %s" %active_user_workflows)
+                       for x in toPub_docs if x['transfer_state']==3]
+        #self.logger.debug("active_user_workflows: %s" %active_user_workflows)
 
         for user_wf in active_user_workflows:
             workflow = str(user_wf['key'][3])
@@ -294,18 +293,14 @@ class PublisherWorker:
 		    pnn = str(active_file['value'][0])
 		    input_dataset = str(active_file['value'][3])
 		    input_dbs_url = str(active_file['value'][4])
-		self.logger.debug("ACTIVE_: %s" %dest_lfn)
 		filename = os.path.basename(dest_lfn)
-		self.logger.debug("ACTIVE_: %s" %filename)
 		left_piece, jobid_fileext = filename.rsplit('_', 1)
 		if '.' in jobid_fileext:
 		    fileext = jobid_fileext.rsplit('.', 1)[-1]
 		    orig_filename = left_piece + '.' + fileext
 		else:
 		    orig_filename = left_piece
-		self.logger.debug("ACTIVE_: %s" %orig_filename)
 		lfn_ready.setdefault(orig_filename, []).append(dest_lfn)
-		self.logger.debug("ACTIVE_: %s" %lfn_ready)
         #                msg = "There are %s ready files in %s active files." % (sum(map(len, lfn_ready.values())), user_wf['value'])
            # self.logger.info(wfnamemsg+msg)
 	    try:
@@ -500,8 +495,9 @@ class PublisherWorker:
                 data['list_of_ids'] = docId
                 data['list_of_publication_state'] = 'DONE'
                 try:
-                    result = self.oracleDB.post('/crabserver/dev/filetransfers',
+                    result = self.oracleDB.post(self.config.oracleFileTrans,
                                                 data=encodeRequest(data))
+                    self.logger.debug("updated: %s " % docId)
                 except Exception as ex:
                     self.logger.error("Error during status update: %s" %ex)
 
@@ -542,12 +538,15 @@ class PublisherWorker:
         now = str(datetime.datetime.now())
         last_update = int(time.time())
         if self.config.isOracle:
+            h = 0
             for lfn in files:
+                h = h + 1
+                self.logger.debug("Marking failed %s" % h)
                 source_lfn = self.lfn_map[lfn]
                 docId = getHashLfn(source_lfn)
                 self.logger.debug("Marking failed %s" % docId)
                 try:
-                    docbyId = self.oracleDB.get('/crabserver/dev/fileusertransfers',
+                    docbyId = self.oracleDB.get(self.config.oracleFileTrans.replace('filetransfers','fileusertransfers'),
                                                 data=encodeRequest({'subresource': 'getById', 'id': docId}))
                 except Exception as ex:
                     self.logger.error("Error updating failed docs: %s" %ex)
@@ -564,13 +563,14 @@ class PublisherWorker:
                     fileDoc['list_of_publication_state'] = 'FAILED'
                 else:
                     fileDoc['list_of_publication_state'] = 'RETRY'
+                #TODO: implement retry
                 fileDoc['list_of_retry_value'] = 1
                 fileDoc['list_of_failure_reason'] = failure_reason
 
-                self.logger.debug("update: %s" % fileDoc)
                 try:
-                    result = self.oracleDB.post('/crabserver/dev/filetransfers',
+                    result = self.oracleDB.post(self.config.oracleFileTrans,
                                                 data=encodeRequest(fileDoc))
+                    self.logger.debug("updated: %s " % docId)
                 except Exception as ex:
                     msg = "Error updating document"
                     msg += str(ex)
@@ -673,7 +673,7 @@ class PublisherWorker:
                 self.logger.error(wfnamemsg+msg)
             publDescFiles.setdefault(dataset, []).append(publDescFile)
         msg = "Publication description files: %s" % (publDescFiles)
-        self.logger.debug(wfnamemsg+msg)
+        #self.logger.debug(wfnamemsg+msg)
         ## Discard ready files for which there is no filemetadata.
         msg = "Discarding ready files for which there is no publication description file available (and vice versa)."
         self.logger.info(wfnamemsg+msg)
@@ -681,7 +681,7 @@ class PublisherWorker:
         msg = "Number of publication description files to publish: %s" % (sum(map(len, toPublish.values())))
         self.logger.info(wfnamemsg+msg)
         msg = "Publication description files to publish: %s" % (toPublish)
-        self.logger.debug(wfnamemsg+msg)
+        #self.logger.debug(wfnamemsg+msg)
         ## If there is nothing to publish, return.
         if not toPublish:
             if self.force_failure:

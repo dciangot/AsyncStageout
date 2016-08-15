@@ -133,9 +133,10 @@ class PublisherDaemon(BaseDaemon):
                                   from oracleDB: %s" %ex)
 
             result = oracleOutputMapping(results)
-            self.logger.debug("Results: %s" %result)
             #TODO: join query for publisher (same of submitter)
-            return [[x['username'],x['user_group'],x['user_role']] for x in result ]
+            unique_users = [list(i) for i in set(tuple([x['username'], x['user_group'], x['user_role']]) for x in result 
+                                                if x['transfer_state']==3)]                               
+            return unique_users
         else:
             #TODO: Remove stale=ok for now until tested
             #query = {'group': True, 'group_level': 3, 'stale': 'ok'}

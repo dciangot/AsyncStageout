@@ -35,7 +35,8 @@ def generate_xml(input):
     xmllocation = './ASO_XML_Report.xml'
     logger = logging.getLogger()
     handler = logging.StreamHandler(sys.stdout)
-    formatter = logging.Formatter("%(asctime)s:%(levelname)s:%(module)s %(message)s", datefmt="%a, %d %b %Y %H:%M:%S %Z(%z)")
+    formatter = logging.Formatter("%(asctime)s:%(levelname)s:%(module)s %(message)s",
+                                  datefmt="%a, %d %b %Y %H:%M:%S %Z(%z)")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.DEBUG)
@@ -93,31 +94,30 @@ def generate_xml(input):
         logger.debug(str(e))
 
 
-
-
-
 if __name__ == "__main__":
-    server = HTTPRequests('mmascher-gwms.cern.ch',
+    server = HTTPRequests('cmsweb-testbed.cern.ch',
                           '/data/srv/asyncstageout/state/asyncstageout/creds/OpsProxy',
                           '/data/srv/asyncstageout/state/asyncstageout/creds/OpsProxy')
 
-    result = server.get('/crabserver/dev/filetransfers', data=encodeRequest({'subresource': 'groupedTransferStatistics', 'grouping': 0}))
+    result = server.get('/crabserver/preprod/filetransfers', 
+                        data=encodeRequest({'subresource': 'groupedTransferStatistics', 'grouping': 0}))
 
     results = oracleOutputMapping(result)
 
 
-    status = {'timestamp':"", 'transfers':{}, 'publications':{}}
+    status = {'transfers':{}, 'publications':{}}
     for doc in results:
         if doc['aso_worker']=="asodciangot1": 
             status['transfers'][TRANSFERDB_STATES[doc['transfer_state']]] = doc['nt']
 
-    result = server.get('/crabserver/dev/filetransfers', data=encodeRequest({'subresource': 'groupedPublishStatistics', 'grouping': 0}))
+    result = server.get('/crabserver/preprod/filetransfers',
+                        data=encodeRequest({'subresource': 'groupedPublishStatistics', 'grouping': 0}))
 
     results = oracleOutputMapping(result)
 
     for doc in results:
         if doc['aso_worker']=="asodciangot1": 
-            status['publications'][TRANSFERDB_STATES[doc['publication_state']]] = doc['nt']
+            status['publications'][PUBLICATIONDB_STATES[doc['publication_state']]] = doc['nt']
 
     print (status)
 

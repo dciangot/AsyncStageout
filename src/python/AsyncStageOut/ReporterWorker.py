@@ -319,7 +319,7 @@ class ReporterWorker:
                     data['list_of_ids'] = getHashLfn(lfn)
                     docId = getHashLfn(lfn)
                     data['list_of_transfer_state'] = "DONE"
-                    result = self.oracleDB.post('/crabserver/dev/filetransfers',
+                    result = self.oracleDB.post(self.config.oracleFileTrans,
                                          data=encodeRequest(data))
                     updated_lfn.append(lfn)
                     self.logger.debug("Marked good %s" % lfn)
@@ -353,7 +353,7 @@ class ReporterWorker:
                 continue
             self.logger.info("Transferred file %s updated, removing now source file" %docId)
             try:
-                docbyId = self.oracleDB.get('/crabserver/dev/fileusertransfers',
+                docbyId = self.oracleDB.get(self.config.oracleFileTrans.replace('filetransfers','fileusertransfers'),
                                             data=encodeRequest({'subresource': 'getById', 'id': docId}))
                 document = oracleOutputMapping(docbyId, None)[0]
             except Exception as ex:
@@ -449,7 +449,7 @@ class ReporterWorker:
             if self.config.isOracle:
                 try:
                     self.logger.debug("Document: %s" %docId)
-                    docbyId = self.oracleDB.get('/crabserver/dev/fileusertransfers',
+                    docbyId = self.oracleDB.get(self.config.oracleFileTrans.replace('filetransfers','fileusertransfers'),
                                                 data=encodeRequest({'subresource': 'getById', 'id': docId}))
                     document = oracleOutputMapping(docbyId)[0]
                     data = {}
@@ -469,7 +469,7 @@ class ReporterWorker:
                     data['list_of_retry_value'] = 0
 
                     self.logger.debug("update: %s" % data)
-                    result = self.oracleDB.post('/crabserver/dev/filetransfers',
+                    result = self.oracleDB.post(self.config.oracleFileTrans,
                                          data=encodeRequest(data))
                     updated_lfn.append(lfn)
                     self.logger.debug("Marked failed %s" % lfn)
