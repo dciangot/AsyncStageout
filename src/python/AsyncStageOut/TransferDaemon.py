@@ -13,8 +13,7 @@ Here's the algorithm
 import os
 import logging
 from multiprocessing import Pool
-import time
-import json
+
 from RESTInteractions import HTTPRequests
 from ServerUtilities import encodeRequest, oracleOutputMapping
 
@@ -152,7 +151,7 @@ class TransferDaemon(BaseDaemon):
         for site in sites:
             if site and str(site) != 'None' and str(site) != 'unknown':
                 site_tfc_map[site] = self.get_tfc_rules(site)
-		self.logger.debug('tfc site: %s %s' %(site, self.get_tfc_rules(site)))
+                self.logger.debug('tfc site: %s %s' %(site, self.get_tfc_rules(site)))
         self.logger.debug('kicking off pool')
         for u in users:
             self.logger.debug('current_running %s' %current_running)
@@ -235,7 +234,6 @@ class TransferDaemon(BaseDaemon):
 
         active_sites_dest = [x['destination'] for x in documents]
         active_sites = active_sites_dest + [x['source'] for x in documents]
-	
         try:
             self.kibana_file.write(self.doc_acq+"\n")
         except Exception as ex:
