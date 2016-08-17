@@ -48,7 +48,7 @@ def generate_xml(input):
     # change this to a name which you will use in kibana queries(for example vocms031 or any other name)
     # or just uncomment next line to use the hostname of the machine which is running this script
     # child.text = gethostname().split('.')[0]
-    child.text = "oramon-test" 
+    child.text = "oramon-testbed" 
 
     fmt = "%Y-%m-%dT%H:%M:%S%z"
     now_utc = datetime.datetime.now().strftime(fmt)
@@ -106,9 +106,20 @@ if __name__ == "__main__":
 
 
     status = {'transfers':{}, 'publications':{}}
+    tmp = {'transfers':{ 'DONE':0, 'ACQUIRED':0, 'SUBMITTED':0, 'FAILED':0, 'RETRY':0 }, 
+           'publications':{'DONE':0, 'ACQUIRED':0, 'NEW':0, 'FAILED':0, 'RETRY':0}}
+
+    #past = open("tmp_transfer")
+    #tmp = json.load(past)
+
     for doc in results:
-        if doc['aso_worker']=="asodciangot1": 
-            status['transfers'][TRANSFERDB_STATES[doc['transfer_state']]] = doc['nt']
+        if doc['aso_worker']=="asodciangot1":
+            if 'transfers' in tmp and TRANSFERDB_STATES[doc['transfer_state']] in tmp['transfers']:
+                status['transfers'][TRANSFERDB_STATES[doc['transfer_state']]] = - tmp['transfers'][TRANSFERDB_STATES[doc['transfer_state']]] + doc['nt']
+                tmp['transfers'][TRANSFERDB_STATES[doc['transfer_state']]] = doc['nt']
+            else:
+                status['transfers'][TRANSFERDB_STATES[doc['transfer_state']]] = doc['nt']
+                tmp['transfers'][TRANSFERDB_STATES[doc['transfer_state']]] = doc['nt']
 
     result = server.get('/crabserver/preprod/filetransfers',
                         data=encodeRequest({'subresource': 'groupedPublishStatistics', 'grouping': 0}))
@@ -116,12 +127,22 @@ if __name__ == "__main__":
     results = oracleOutputMapping(result)
 
     for doc in results:
-        if doc['aso_worker']=="asodciangot1": 
-            status['publications'][PUBLICATIONDB_STATES[doc['publication_state']]] = doc['nt']
+        if doc['aso_worker']=="asodciangot1":
+            if 'publications' in tmp and PUBLICATIONDB_STATES[doc['publication_state']] in tmp['publications']:
+                status['publications'][PUBLICATIONDB_STATES[doc['publication_state']]] = -tmp['publications'][PUBLICATIONDB_STATES[doc['publication_state']]] + doc['nt']
+                tmp['publications'][PUBLICATIONDB_STATES[doc['publication_state']]] = doc['nt']
+            else:
+                status['publications'][PUBLICATIONDB_STATES[doc['publication_state']]] = doc['nt']
+                tmp['publications'][PUBLICATIONDB_STATES[doc['publication_state']]] = doc['nt']
+
+    #past.close()
+    tmp_transfer = open("tmp_transfer","w")
+    tmp_transfer.write(json.dumps(tmp))
+    tmp_transfer.close()
 
     print (status)
 
-    generate_xml(status)
+    generate_xml(tmp)
 
     sys.exit(0)
 

@@ -197,6 +197,7 @@ class PublisherWorker:
         ## publish (i.e. the file has been transferred, but not yet published -nor its
         ## publication has failed-). We call them "active" files.
         active_user_workflows = []
+        unique_user_workflows = []
         now = int(time.time()) - time.timezone
         if self.config.isOracle:
             fileDoc = {}
@@ -210,13 +211,15 @@ class PublisherWorker:
                                             data=encodeRequest(fileDoc))
                 toPub_docs = oracleOutputMapping(results)
                 #self.logger.info('toPub_docs for %s' % toPub_docs)  
-                active_user_workflows = [{'key': [x['username'],
-                                                           x['user_group'],
-                                                           x['user_role'],
-                                                           x['taskname']
-                                                          ]}
-                                                   for x in toPub_docs if x['transfer_state']==3
+                active_user_workflows = [[x['username'],
+                                          x['user_group'],
+                                          x['user_role'],
+                                          x['taskname']
+                                         ]
+                                                   for x in toPub_docs if x['transfer_state']==3 and x['publication_state'] not in [2,3,5]
                                         ]
+
+                unique_user_workflows = [{'key':list(i)} for i in set(tuple(x) for x in active_user_workflows)]
             except Exception as ex:
                 self.logger.error("Failed to get acquired publications \
                                   from oracleDB: %s" %ex)
@@ -224,7 +227,7 @@ class PublisherWorker:
         else:
             query = {'group': True, 'startkey': [self.user, self.group, self.role], 'endkey': [self.user, self.group, self.role, {}]}
             try:
-                active_user_workflows = self.db.loadView('DBSPublisher', 'publish', query)['rows']
+                unique_user_workflows = self.db.loadView('DBSPublisher', 'publish', query)['rows']
             except Exception as ex:
                 self.logger.error('A problem occured when contacting couchDB \
                                   to get the list of active WFs: %s' % ex)
@@ -245,10 +248,9 @@ class PublisherWorker:
                                   x['dbs_url'],
                                   x['last_update']
                                  ]}
-                       for x in toPub_docs if x['transfer_state']==3]
+                       for x in toPub_docs if x['transfer_state']==3 and x['publication_state'] not in [2,3,5]]
         #self.logger.debug("active_user_workflows: %s" %active_user_workflows)
-
-        for user_wf in active_user_workflows:
+        for user_wf in unique_user_workflows:
             workflow = str(user_wf['key'][3])
             wfnamemsg = "%s: " % (workflow)
             ## Get the list of active files in the workflow.
@@ -331,7 +333,7 @@ class PublisherWorker:
             self.logger.info(wfnamemsg+msg)
             ## List with booleans that tell if there are more than max_files_per_block to
             ## publish per dataset.
-            enough_lfn_ready = [x for x in lens_lfn_ready if x >= self.max_files_per_block]
+            enough_lfn_ready = [(x >= self.max_files_per_block) for x in lens_lfn_ready]
             ## Auxiliary flag.
             enough_lfn_ready_in_all_datasets = not False in enough_lfn_ready
             ## If for any of the datasets there are less than max_files_per_block to publish,
