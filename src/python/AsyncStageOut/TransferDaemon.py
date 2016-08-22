@@ -128,8 +128,8 @@ class TransferDaemon(BaseDaemon):
         try:
             params = self.config_db.loadView('asynctransfer_config',
                                              'GetTransferConfig', query)
-            self.config.max_files_per_transfer = params['rows'][0]['key'][1]
-            self.config.algoName = params['rows'][0]['key'][2]
+            #self.config.max_files_per_transfer = 100#params['rows'][0]['key'][1]
+            #self.config.algoName = params['rows'][0]['key'][2]
         except IndexError:
             self.logger.exception('Config data could not be retrieved from \
                                   the config database. \
