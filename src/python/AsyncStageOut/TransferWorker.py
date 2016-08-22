@@ -118,8 +118,6 @@ class TransferWorker:
         self.commandTimeout = 1200
         server = CouchServer(dburl=self.config.couch_instance, ckey=self.config.opsProxy, cert=self.config.opsProxy)
         self.db = server.connectDatabase(self.config.files_database)
-        config_server = CouchServer(dburl=self.config.config_couch_instance, ckey=self.config.opsProxy, cert=self.config.opsProxy)
-        self.config_db = config_server.connectDatabase(self.config.config_database)
 #        self.fts_server_for_transfer = getFTServer("T1_UK_RAL", 'getRunningFTSserver', self.config_db, self.logger)
         self.fts_server_for_transfer = 'https://fts3-pilot.cern.ch:8446'
 

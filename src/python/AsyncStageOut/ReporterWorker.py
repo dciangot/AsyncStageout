@@ -35,6 +35,7 @@ from RESTInteractions import HTTPRequests
 from ServerUtilities import getHashLfn, generateTaskName,\
         PUBLICATIONDB_STATUSES, encodeRequest, oracleOutputMapping
 
+
 def getProxy(userdn, group, role, defaultDelegation, logger):
     """
     _getProxy_
@@ -114,7 +115,7 @@ class ReporterWorker:
         self.logger.debug("Trying to get DN")
         try:
             self.userDN = getDNFromUserName(self.user, self.logger)
-        except Exception, ex:
+        except Exception as ex:
             msg = "Error retrieving the user DN"
             msg += str(ex)
             msg += str(traceback.format_exc())
@@ -149,7 +150,7 @@ class ReporterWorker:
         self.valid = False
         try:
             self.valid, proxy = getProxy(self.userDN, "", "", defaultDelegation, self.logger)
-        except Exception, ex:
+        except Exception as ex:
             msg = "Error getting the user proxy"
             msg += str(ex)
             msg += str(traceback.format_exc())
@@ -179,8 +180,6 @@ class ReporterWorker:
         os.environ['X509_USER_PROXY'] = self.userProxy
         server = CouchServer(dburl=self.config.couch_instance, ckey=self.config.opsProxy, cert=self.config.opsProxy)
         self.db = server.connectDatabase(self.config.files_database)
-        config_server = CouchServer(dburl=self.config.config_couch_instance, ckey=self.config.opsProxy, cert=self.config.opsProxy)
-        self.config_db = config_server.connectDatabase(self.config.config_database)
 
         try:
             self.phedex = PhEDEx(responseType='xml',
@@ -212,12 +211,12 @@ class ReporterWorker:
             if os.path.basename(input_file).startswith('Reporter'):
                 try:
                     json_data = json.loads(open(input_file).read())
-                except ValueError, e:
+                except ValueError as e:
                     self.logger.error("Error loading %s" % e)
                     self.logger.debug('Removing %s' % input_file)
                     os.unlink( input_file )
                     continue
-                except Exception, e:
+                except Exception as e:
                     self.logger.error("Error loading %s" % e)
                     self.logger.debug('Removing %s' % input_file)
                     os.unlink( input_file )
@@ -301,7 +300,7 @@ class ReporterWorker:
             if not self.config.isOracle:
                 try:
                     document = self.db.document(hash_lfn)
-                except Exception, ex:
+                except Exception as ex:
                     msg = "Error loading document from couch"
                     msg += str(ex)
                     msg += str(traceback.format_exc())
@@ -345,7 +344,7 @@ class ReporterWorker:
                 continue
             try:
                 self.db.commit()
-            except Exception, ex:
+            except Exception as ex:
                 msg = "Error commiting documents in couch"
                 msg += str(ex)
                 msg += str(traceback.format_exc())
@@ -392,7 +391,7 @@ class ReporterWorker:
         self.phedex.getNodeTFC(site)
         try:
             tfc_file = self.phedex.cacheFileName('tfc', inputdata={'node': site})
-        except Exception, e:
+        except Exception as e:
             self.logger.exception('A problem occured when getting the TFC regexp: %s' % e)
             return None
         return readTFC(tfc_file)
@@ -404,7 +403,7 @@ class ReporterWorker:
         """
         try:
             site, lfn = tuple(file.split(':'))
-        except Exception, e:
+        except Exception as e:
             self.logger.error('It does not seem to be an lfn %s' %file.split(':'))
             return None
         if site in self.site_tfc_map:
@@ -479,7 +478,7 @@ class ReporterWorker:
             else:
                 try:
                     document = self.db.document( docId )
-                except Exception, ex:
+                except Exception as ex:
                     msg = "Error loading document from couch"
                     msg += str(ex)
                     msg += str(traceback.format_exc())
@@ -514,7 +513,7 @@ class ReporterWorker:
                         self.db.makeRequest(uri = updateUri, type = "PUT", decode = False)
                         updated_lfn.append(docId)
                         self.logger.debug("Marked failed %s" % docId)
-                    except Exception, ex:
+                    except Exception as ex:
                         msg = "Error in updating document in couch"
                         msg += str(ex)
                         msg += str(traceback.format_exc())
@@ -522,7 +521,7 @@ class ReporterWorker:
                         continue
                     try:
                         self.db.commit()
-                    except Exception, ex:
+                    except Exception as ex:
                         msg = "Error commiting documents in couch"
                         msg += str(ex)
                         msg += str(traceback.format_exc())
