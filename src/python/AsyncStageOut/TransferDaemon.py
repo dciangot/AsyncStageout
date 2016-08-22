@@ -99,8 +99,6 @@ class TransferDaemon(BaseDaemon):
                                  ckey=self.config.opsProxy,
                                  cert=self.config.opsProxy)
             self.db = server.connectDatabase(self.config.files_database)
-        cfg_server = CouchServer(dburl=self.config.config_couch_instance)
-        self.config_db = cfg_server.connectDatabase(self.config.config_database)
         self.logger.debug('Connected to CouchDB')
         self.pool = Pool(processes=self.config.pool_size)
         try:
@@ -123,20 +121,6 @@ class TransferDaemon(BaseDaemon):
         3. For each user get a suitably sized input for submission (call to a list)
         4. Submit to a subprocess
         """
-
-        query = {'stale':'ok'}
-        try:
-            params = self.config_db.loadView('asynctransfer_config',
-                                             'GetTransferConfig', query)
-            #self.config.max_files_per_transfer = 100#params['rows'][0]['key'][1]
-            #self.config.algoName = params['rows'][0]['key'][2]
-        except IndexError:
-            self.logger.exception('Config data could not be retrieved from \
-                                  the config database. \
-                                  Fallback to the config file')
-        except Exception as e:
-            self.logger.exception('A problem occured \
-                                  when contacting couchDB: %s' % e)
 
         if self.config.isOracle:
             sites, users = self.oracleSiteUser(self.oracleDB)
