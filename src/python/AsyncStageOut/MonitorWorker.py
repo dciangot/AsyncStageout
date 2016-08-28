@@ -67,14 +67,13 @@ def execute_command(command, logger, timeout):
 
 class MonitorWorker:
 
-    def __init__(self, user, split, list_job, config):
+    def __init__(self, user, list_job, config):
         """
         store the user and tfc the worker
         """
-        self.split = split
         self.jobids = list_job
         self.config = config
-        self.logger = logging.getLogger('MonitorTransfer-Worker-%s-%s' % (user, self.split))
+        self.logger = logging.getLogger('MonitorTransfer-Worker-%s' % (user))
         self.commandTimeout = 1200
         self.uiSetupScript = getattr(self.config, 'UISetupScript', None)
         self.init = True

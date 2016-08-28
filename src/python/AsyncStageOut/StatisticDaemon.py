@@ -58,6 +58,8 @@ class StatisticDaemon(BaseDaemon):
         except Exception, e:
             self.logger.exception('A problem occured when contacting couchDB: %s' % e)
 
+        self.config.expiration_days = 1
+         
         expdays = datetime.timedelta(days = self.config.expiration_days)
         self.exptime = datetime.datetime.now() - expdays
         self.logger.debug('Deleting Jobs ended before %s' %str(self.exptime) )
@@ -79,8 +81,8 @@ class StatisticDaemon(BaseDaemon):
                 self.logger.error(msg)
             if jobDoc:
                 try:
-                    self.db.queueDelete(jobDoc)
-
+            #        self.db.queueDelete(jobDoc)
+		    self.db.purge({jobDoc["_id"]: [jobDoc["_rev"]]})
                 except Exception, ex:
 
                     msg =  "Error queuing document for delete in couch"
