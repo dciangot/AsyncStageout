@@ -126,19 +126,18 @@ class TransferWorker:
         """
         stdout, stderr, rc = None, None, 99999
         fts_url_delegation = self.fts_server_for_transfer.replace('8446', '8443')
-        if self.user_proxy:
-            command = 'export X509_USER_PROXY=%s ; source %s ; %s -s %s' % (self.user_proxy, self.uiSetupScript,
-                                                                            'glite-delegation-init', fts_url_delegation)
-            init_time = str(time.strftime("%a, %d %b %Y %H:%M:%S", time.localtime()))
-            self.logger.debug("executing command: %s at: %s for: %s" % (command, init_time, self.userDN))
-            stdout, rc = execute_command(command, self.logger, self.commandTimeout)
-        if not rc or not self.valid_proxy:
-            jobs, jobs_lfn, jobs_pfn, jobs_report = self.files_for_transfer()
-            self.logger.debug("Processing files for %s " %self.user_proxy)
-            if jobs:
-                self.command(jobs, jobs_lfn, jobs_pfn, jobs_report)
-        else:
-            self.logger.debug("User proxy of %s could not be delagated! Trying next time." % self.user)
+    #    if self.user_proxy:
+    #        command = 'export X509_USER_PROXY=%s ; source %s ; %s -s %s' % (self.user_proxy, self.uiSetupScript,
+    #                                                                        'glite-delegation-init', fts_url_delegation)
+    #        init_time = str(time.strftime("%a, %d %b %Y %H:%M:%S", time.localtime()))
+    #        self.logger.debug("executing command: %s at: %s for: %s" % (command, init_time, self.userDN))
+    #        stdout, rc = execute_command(command, self.logger, self.commandTimeout)
+        jobs, jobs_lfn, jobs_pfn, jobs_report = self.files_for_transfer()
+        self.logger.debug("Processing files for %s " %self.user_proxy)
+        if jobs:
+            self.command(jobs, jobs_lfn, jobs_pfn, jobs_report)
+#        else:
+#            self.logger.debug("User proxy of %s could not be delagated! Trying next time." % self.user)
         self.logger.info('Transfers completed')
         return
 
@@ -370,11 +369,17 @@ class TransferWorker:
             fts_job['files_id'] = fileId_list
             fts_job['username'] = self.user
             self.logger.debug("Creating json file %s in %s" % (fts_job, self.dropbox_dir))
-            ftsjob_file = open('%s/Monitor.%s.json' % (self.dropbox_dir, fts_job['FTSJobid']), 'w')
-            jsondata = json.dumps(fts_job)
-            ftsjob_file.write(jsondata)
-            ftsjob_file.close()
-            self.logger.debug("%s ready." % fts_job)
+            while True:
+                try:
+                    ftsjob_file = open('%s/Monitor.%s.json' % (self.dropbox_dir, fts_job['FTSJobid']), 'w')
+                    jsondata = json.dumps(fts_job)
+                    ftsjob_file.write(jsondata)
+                    ftsjob_file.close()
+                    self.logger.debug("%s ready." % fts_job)
+                    break
+                except Exception as ex:
+                    self.logger.error(ex)
+                    continue
             # Prepare Dashboard report
 
             try:

@@ -113,56 +113,9 @@ class ReporterWorker:
             self.cleanEnvironment = 'unset LD_LIBRARY_PATH; unset X509_USER_CERT; unset X509_USER_KEY;'
         # TODO: improve how the worker gets a log
         self.logger.debug("Trying to get DN")
-        try:
-            self.userDN = getDNFromUserName(self.user, self.logger)
-        except Exception as ex:
-            msg = "Error retrieving the user DN"
-            msg += str(ex)
-            msg += str(traceback.format_exc())
-            self.logger.error(msg)
-            self.init = False
-            return
-        if not self.userDN:
-            self.init = False
-            return
-        defaultDelegation = {
-                                  'logger': self.logger,
-                                  'credServerPath' : \
-                                      self.config.credentialDir,
-                                  # It will be moved to be getfrom couchDB
-                                  'myProxySvr': 'myproxy.cern.ch',
-                                  'min_time_left' : getattr(self.config, 'minTimeLeft', 36000),
-                                  'serverDN' : self.config.serverDN,
-                                  'uisource' : self.uiSetupScript,
-                                  'cleanEnvironment' : getattr(self.config, 'cleanEnvironment', False)
-                            }
-        if hasattr(self.config, "cache_area"):
-            try:
-                defaultDelegation['myproxyAccount'] = re.compile('https?://([^/]*)/.*').findall(self.config.cache_area)[0]
-            except IndexError:
-                self.logger.error('MyproxyAccount parameter cannot be retrieved from %s' % self.config.cache_area)
-                pass
-        if getattr(self.config, 'serviceCert', None):
-            defaultDelegation['server_cert'] = self.config.serviceCert
-        if getattr(self.config, 'serviceKey', None):
-            defaultDelegation['server_key'] = self.config.serviceKey
-
-        self.valid = False
-        try:
-            self.valid, proxy = getProxy(self.userDN, "", "", defaultDelegation, self.logger)
-        except Exception as ex:
-            msg = "Error getting the user proxy"
-            msg += str(ex)
-            msg += str(traceback.format_exc())
-            self.logger.error(msg)
-
-        if self.valid:
-            self.userProxy = proxy
-        else:
-            # Use the operator's proxy when the user proxy in invalid.
-            # This will be moved soon
-            self.logger.error('Did not get valid proxy. Setting proxy to ops proxy')
-            self.userProxy = config.opsProxy
+        self.userDN = 'testME'
+        self.valid = True
+        self.userProxy = config.opsProxy
 
 
         try:
@@ -178,8 +131,8 @@ class ReporterWorker:
         self.max_retry = config.max_retry
         # Proxy management in Couch
         os.environ['X509_USER_PROXY'] = self.userProxy
-        server = CouchServer(dburl=self.config.couch_instance, ckey=self.config.opsProxy, cert=self.config.opsProxy)
-        self.db = server.connectDatabase(self.config.files_database)
+        #server = CouchServer(dburl=self.config.couch_instance, ckey=self.config.opsProxy, cert=self.config.opsProxy)
+        #self.db = server.connectDatabase(self.config.files_database)
 
         try:
             self.phedex = PhEDEx(responseType='xml',
@@ -322,6 +275,21 @@ class ReporterWorker:
                                          data=encodeRequest(data))
                     updated_lfn.append(lfn)
                     self.logger.debug("Marked good %s" % lfn)
+                    try:
+                        docbyId = self.oracleDB.get(self.config.oracleFileTrans.replace('filetransfers','fileusertransfers'),
+                                                    data=encodeRequest({'subresource': 'getById', 'id': docId}))
+                        document = oracleOutputMapping(docbyId, None)[0]
+                    except Exception as ex:
+                        msg = "Error getting file from source"
+                        self.logger.error(msg)
+                        raise
+                    if document["source"] not in self.site_tfc_map:
+                        self.logger.debug("site not found... gathering info from phedex")
+                        self.site_tfc_map[document["source"]] = self.get_tfc_rules(document["source"])
+                    pfn = self.apply_tfc_to_lfn( '%s:%s' %(document["source"], lfn))
+                #    self.logger.debug("File has to be removed now from source site: %s" %pfn)
+                #    self.remove_files(self.userProxy, pfn)
+                #    self.logger.debug("Transferred file removed from source")
                 else:
                     if document['state'] != 'killed' and document['state'] != 'done' and document['state'] != 'failed':
                         outputLfn = document['lfn'].replace('store/temp', 'store', 1)
@@ -336,36 +304,21 @@ class ReporterWorker:
                         updated_lfn.append(lfn)
                         self.logger.debug("Marked good %s" % lfn)
                     else: updated_lfn.append(lfn)
+                    try:
+                        self.db.commit()
+                    except Exception as ex:
+                        msg = "Error commiting documents in couch"
+                        msg += str(ex)
+                        msg += str(traceback.format_exc())
+                        self.logger.error(msg)
+                        continue
+                    self.logger.info("Transferred file %s updated, removing now source file" %docId)
             except Exception as ex:
                 msg = "Error updating document"
                 msg += str(ex)
                 msg += str(traceback.format_exc())
                 self.logger.error(msg)
                 continue
-            try:
-                self.db.commit()
-            except Exception as ex:
-                msg = "Error commiting documents in couch"
-                msg += str(ex)
-                msg += str(traceback.format_exc())
-                self.logger.error(msg)
-                continue
-            self.logger.info("Transferred file %s updated, removing now source file" %docId)
-            try:
-                docbyId = self.oracleDB.get(self.config.oracleFileTrans.replace('filetransfers','fileusertransfers'),
-                                            data=encodeRequest({'subresource': 'getById', 'id': docId}))
-                document = oracleOutputMapping(docbyId, None)[0]
-            except Exception as ex:
-                msg = "Error getting file from source"
-                self.logger.error(msg)
-                raise
-            if document["source"] not in self.site_tfc_map:
-                self.logger.debug("site not found... gathering info from phedex")
-                self.site_tfc_map[document["source"]] = self.get_tfc_rules(document["source"])
-            pfn = self.apply_tfc_to_lfn( '%s:%s' %(document["source"], lfn))
-            self.logger.debug("File has to be removed now from source site: %s" %pfn)
-            self.remove_files(self.userProxy, pfn)
-            self.logger.debug("Transferred file removed from source")
         return updated_lfn
 
     def remove_files(self, userProxy, pfn):
