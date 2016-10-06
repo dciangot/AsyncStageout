@@ -3,12 +3,13 @@ import Queue
 import sys
 import os
 import json
+import time
 
 def do_work(in_queue,):
     while True:
         item = in_queue.get()
         # process
-        with open("/data/srv/asyncstageout/current/install/asyncstageout/AsyncTransfer/dropbox/outputs/"+item) as json_file:
+        with open("/data/user/105pre3/current/install/asyncstageout/AsyncTransfer/dropbox/outputs/"+item) as json_file:
             json_data = json.load(json_file)
 
         jobid = item.split(".")[1]
@@ -30,11 +31,11 @@ def do_work(in_queue,):
 
         while True:
             try:
-                if not os.path.exists("/data/srv/asyncstageout/current/install/asyncstageout/Monitor/work/%s" %user):
-                    os.makedirs("/data/srv/asyncstageout/current/install/asyncstageout/Monitor/work/%s" %user)
-                if not os.path.exists("/data/srv/asyncstageout/current/install/asyncstageout/AsyncTransfer/dropbox/inputs/%s" %user):
-                    os.makedirs("/data/srv/asyncstageout/current/install/asyncstageout/AsyncTransfer/dropbox/inputs/%s" %user)
-                out_file = open("/data/srv/asyncstageout/current/install/asyncstageout/AsyncTransfer/dropbox/inputs/%s/Reporter.%s.json"%(user,jobid),"w")
+                if not os.path.exists("/data/user/105pre3/current/install/asyncstageout/Monitor/work/%s" %user):
+                    os.makedirs("/data/user/105pre3/current/install/asyncstageout/Monitor/work/%s" %user)
+                if not os.path.exists("/data/user/105pre3/current/install/asyncstageout/AsyncTransfer/dropbox/inputs/%s" %user):
+                    os.makedirs("/data/user/105pre3/current/install/asyncstageout/AsyncTransfer/dropbox/inputs/%s" %user)
+                out_file = open("/data/user/105pre3/current/install/asyncstageout/AsyncTransfer/dropbox/inputs/%s/Reporter.%s.json"%(user,jobid),"w")
                 out_file.write(report_j)
                 out_file.close()
                 break
@@ -43,7 +44,8 @@ def do_work(in_queue,):
                 print msg
                 continue
 
-        os.remove("/data/srv/asyncstageout/current/install/asyncstageout/AsyncTransfer/dropbox/outputs/"+item)
+        os.remove("/data/user/105pre3/current/install/asyncstageout/AsyncTransfer/dropbox/outputs/"+item)
+	print ("/data/user/105pre3/current/install/asyncstageout/AsyncTransfer/dropbox/outputs/"+item+" removed.")
         in_queue.task_done()
 
 if __name__ == "__main__":
@@ -52,15 +54,17 @@ if __name__ == "__main__":
     total = 20
 
     # start for workers
-    for i in range(0,6):
+    for i in range(0,8):
         t = threading.Thread(target=do_work, args=(work,))
         t.daemon = True
         t.start()
 
-    # produce data
-    for i in os.listdir("/data/srv/asyncstageout/current/install/asyncstageout/AsyncTransfer/dropbox/outputs"):
-        work.put(i)
+    while True: 	
+        # produce data
+        for i in os.listdir("/data/user/105pre3/current/install/asyncstageout/AsyncTransfer/dropbox/outputs"):
+            work.put(i)
 
-    work.join()
+        work.join()
+	time.sleep(2)
 
     sys.exit()

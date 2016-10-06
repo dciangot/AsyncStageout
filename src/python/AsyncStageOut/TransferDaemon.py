@@ -223,7 +223,7 @@ class TransferDaemon(BaseDaemon):
         except Exception as ex:
             self.logger.error(ex)
 
-        self.logger.debug('Active sites are: %s' % active_sites)
+        self.logger.debug('Active sites are: %s' % list(set(active_sites)))
         return list(set(active_sites)), active_users
 
 

@@ -246,6 +246,7 @@ class ReporterWorker:
         Mark the list of files as tranferred
         """
         updated_lfn = []
+        good_ids = []
         for it, lfn in enumerate(files):
             hash_lfn = getHashLfn(lfn)
             self.logger.info("Marking good %s" % hash_lfn)
@@ -264,32 +265,9 @@ class ReporterWorker:
                 now = str(datetime.datetime.now())
                 last_update = time.time()
                 if self.config.isOracle:
-                    #TODO: there still need to change lfn here? + check on states
-                    data = {}
-                    data['asoworker'] = self.config.asoworker
-                    data['subresource'] = 'updateTransfers'
-                    data['list_of_ids'] = getHashLfn(lfn)
                     docId = getHashLfn(lfn)
-                    data['list_of_transfer_state'] = "DONE"
-                    result = self.oracleDB.post(self.config.oracleFileTrans,
-                                         data=encodeRequest(data))
+                    good_ids.append(docId)
                     updated_lfn.append(lfn)
-                    self.logger.debug("Marked good %s" % lfn)
-                    try:
-                        docbyId = self.oracleDB.get(self.config.oracleFileTrans.replace('filetransfers','fileusertransfers'),
-                                                    data=encodeRequest({'subresource': 'getById', 'id': docId}))
-                        document = oracleOutputMapping(docbyId, None)[0]
-                    except Exception as ex:
-                        msg = "Error getting file from source"
-                        self.logger.error(msg)
-                        raise
-                    if document["source"] not in self.site_tfc_map:
-                        self.logger.debug("site not found... gathering info from phedex")
-                        self.site_tfc_map[document["source"]] = self.get_tfc_rules(document["source"])
-                    pfn = self.apply_tfc_to_lfn( '%s:%s' %(document["source"], lfn))
-                #    self.logger.debug("File has to be removed now from source site: %s" %pfn)
-                #    self.remove_files(self.userProxy, pfn)
-                #    self.logger.debug("Transferred file removed from source")
                 else:
                     if document['state'] != 'killed' and document['state'] != 'done' and document['state'] != 'failed':
                         outputLfn = document['lfn'].replace('store/temp', 'store', 1)
@@ -319,6 +297,24 @@ class ReporterWorker:
                 msg += str(traceback.format_exc())
                 self.logger.error(msg)
                 continue
+        
+	if self.config.isOracle:
+	    #TODO: there still need to change lfn here? + check on states
+            try:
+                data = {}
+	        data['asoworker'] = self.config.asoworker
+	        data['subresource'] = 'updateTransfers'
+	        data['list_of_ids'] = good_ids 
+	        data['list_of_transfer_state'] = ["DONE" for x in good_ids]
+	        result = self.oracleDB.post(self.config.oracleFileTrans,
+				            data=encodeRequest(data))
+	        self.logger.debug("Marked good %s" % good_ids)
+            except Exception as ex:
+                msg = "Error updating document"
+                msg += str(ex)
+                msg += str(traceback.format_exc())
+                self.logger.error(msg)
+
         return updated_lfn
 
     def remove_files(self, userProxy, pfn):

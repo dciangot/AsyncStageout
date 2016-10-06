@@ -75,7 +75,7 @@ class TransferWorker:
         self.role = user[2]
         self.tfc_map = tfc_map
         self.config = config
-        self.kibana_file = open(self.config.kibana_dir+"/"+self.user+"/"+"submitted.json", 'a')
+        #self.kibana_file = open(self.config.kibana_dir+"/"+self.user+"/"+"submitted.json", 'a')
         self.dropbox_dir = '%s/dropbox/outputs' % self.config.componentDir
         logging.basicConfig(level=config.log_level)
         self.logger = logging.getLogger('AsyncTransfer-Worker-%s' % self.user)
@@ -226,6 +226,7 @@ class TransferWorker:
                                                         len(active_files),
                                                         source,
                                                         destination))
+                    active_files = active_files[:self.config.max_files_per_transfer]
                 else:
                     query = {'reduce':False,
                              'limit': self.config.max_files_per_transfer,
@@ -242,7 +243,11 @@ class TransferWorker:
                 lfn_list = []
                 pfn_list = []
                 dash_report = []
-
+                try:
+                    self.acquired_file, dashboard_report = self.mark_acquired(active_files)
+                except Exception as ex:
+                    self.logger.error("%s" % ex)
+                    raise
                 # take these active files and make a copyjob entry
                 def tfc_map(item):
                     self.logger.debug('Preparing PFNs...')
@@ -251,12 +256,12 @@ class TransferWorker:
                     self.logger.debug('PFNs prepared... %s %s' %(destination_pfn,source_pfn))
                     if source_pfn and destination_pfn and self.valid_proxy:
                         try:
-                            acquired_file, dashboard_report = self.mark_acquired([item])
+                            #acquired_file, dashboard_report = self.mark_acquired([item])
                             self.logger.debug('Files have been marked acquired')
                         except Exception as ex:
                             self.logger.error("%s" % ex)
                             raise
-                        if acquired_file:
+                        if self.acquired_file:
                             self.logger.debug('Starting FTS Job creation...')
                             # Prepare Monitor metadata
                             lfn_list.append(item['value'][0])
@@ -382,10 +387,10 @@ class TransferWorker:
                     continue
             # Prepare Dashboard report
 
-            try:
-                self.kibana_file.write(str(time.time())+"\t"+str(len(fts_job['LFNs']))+"\t"+str(link)+"\n")
-            except Exception as ex:
-                self.logger.error(ex)
+       #     try:
+       #         self.kibana_file.write(str(time.time())+"\t"+str(len(fts_job['LFNs']))+"\t"+str(link)+"\n")
+       #     except Exception as ex:
+       #         self.logger.error(ex)
 
         return
 
@@ -404,6 +409,7 @@ class TransferWorker:
         lfn_in_transfer = []
         dash_rep = ()
         if self.config.isOracle:
+            id_list = []
             for lfn in files:
                 if lfn['value'][0].find('temp') == 7:
                     self.logger.debug("Marking acquired %s" % lfn)
@@ -413,22 +419,27 @@ class TransferWorker:
                         docbyId = self.oracleDB.get(self.config.oracleFileTrans.replace('filetransfers','fileusertransfers'),
                                                     data=encodeRequest({'subresource': 'getById', 'id': docId}))
                         document = oracleOutputMapping(docbyId, None)[0]
-                        fileDoc = {}
-                        fileDoc['asoworker'] = self.config.asoworker
-                        fileDoc['subresource'] = 'updateTransfers'
-                        fileDoc['list_of_ids'] = docId
-                        fileDoc['list_of_transfer_state'] = "SUBMITTED"
-
-                        result = self.oracleDB.post(self.config.oracleFileTrans,
-                                             data=encodeRequest(fileDoc))
+                        id_list.append(docId)
+            		lfn_in_transfer.append(lfn)
                     except Exception as ex:
                         self.logger.error("Error during status update: %s" %ex)
+	    try:	 
+                fileDoc = {}
+                fileDoc['asoworker'] = self.config.asoworker
+                fileDoc['subresource'] = 'updateTransfers'
+                fileDoc['list_of_ids'] = id_list
+                fileDoc['list_of_transfer_state'] = ["SUBMITTED" for x in id_list]
 
-                    lfn_in_transfer.append(lfn)
-                    dash_rep = (document['jobid'], document['job_retry_count'], document['taskname'])
-                    self.logger.debug("Marked acquired %s of %s" % (docId, lfn))
+	
+                result = self.oracleDB.post(self.config.oracleFileTrans,
+                                             data=encodeRequest(fileDoc))
+                self.logger.debug("Marked acquired %s" % (id_list))
+            except Exception as ex:
+                self.logger.error("Error during status update: %s" %ex)
+
+                    #dash_rep = (document['jobid'], document['job_retry_count'], document['taskname'])
                     ## TODO: no need of mark good right? the postjob should updated the status in case of direct stageout I think
-            return lfn_in_transfer, dash_rep
+            return lfn_in_transfer, ("",0,"")
         else:
             for lfn in files:
                 if lfn['value'][0].find('temp') == 7:

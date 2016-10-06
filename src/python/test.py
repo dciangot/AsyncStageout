@@ -16,17 +16,35 @@ server = HTTPRequests('cmsweb-testbed.cern.ch',
                       '/data/srv/asyncstageout/state/asyncstageout/creds/OpsProxy',
                       '/data/srv/asyncstageout/state/asyncstageout/creds/OpsProxy')
 
-"""
+
 fileDoc = {}
 fileDoc['asoworker'] = 'asodciangot1'
-fileDoc['subresource'] = 'acquireTransfers'
+fileDoc['subresource'] = 'acquiredTransfers'
+fileDoc['grouping'] = 0
 
-result = server.post('/crabserver/dev/filetransfers',
+result = server.get('/crabserver/preprod/filetransfers',
                      data=encodeRequest(fileDoc))
-
 
 print(result)
 
+ids = [x["id"] for x in oracleOutputMapping(result)]
+
+for id in ids:
+	fileDoc = {}
+	fileDoc['asoworker'] = 'asodciangot1'
+	fileDoc['subresource'] = 'updateTransfers'
+	fileDoc['list_of_ids'] = id
+	fileDoc['list_of_transfer_state'] = 2 
+        fileDoc['list_of_retry_value'] = 1 
+	fileDoc['list_of_failure_reason'] = 'fail_reason'
+#print(encodeRequest(fileDoc))
+
+
+	result = server.post('/crabserver/preprod/filetransfers',
+		     data=encodeRequest(fileDoc))
+
+	print(oracleOutputMapping(result)["id"])
+'''
 fileDoc = {}
 fileDoc['asoworker'] = 'asodciangot1'
 fileDoc['subresource'] = 'acquiredTransfers'
@@ -45,8 +63,8 @@ fileDoc['grouping'] = 0
 
 result = server.get('/crabserver/dev/filetransfers',
                     data=encodeRequest(fileDoc))
-"""
-#print (oracleOutputMapping(result))
+
+#print (oracleOutputMapping(result)
 fileDoc = {}
 fileDoc['asoworker'] = 'asodciangot1'
 fileDoc['subresource'] = 'updateTransfers'
@@ -62,4 +80,4 @@ result = server.post('/crabserver/preprod/filetransfers',
                      data=encodeRequest(fileDoc))
 print(result)
 
-
+'''
