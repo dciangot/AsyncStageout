@@ -185,7 +185,6 @@ class TransferDaemon(BaseDaemon):
         fileDoc['grouping'] = 0
         fileDoc['asoworker'] = self.config.asoworker
 
-        result = dict()
         try:
             result = db.get(self.config.oracleFileTrans,
                              data=encodeRequest(fileDoc))
@@ -197,43 +196,26 @@ class TransferDaemon(BaseDaemon):
         self.logger.debug(oracleOutputMapping(result))
         # TODO: translate result into list((user,group,role),...)
         if len(oracleOutputMapping(result)) != 0:
-            self.logger.debug(type( [[x['username'].encode('ascii','ignore'), x['user_group'], x['user_role']] for x in oracleOutputMapping(result)]))
+            self.logger.debug(type([[x['username'].encode('ascii', 'ignore'), x['user_group'], x['user_role']]
+                                    for x in oracleOutputMapping(result)]))
             try:
                 docs =  oracleOutputMapping(result)
                 users = [[x['username'], x['user_group'], x['user_role']] for x in docs]
                 self.logger.info('Users to process: %s' % str(users))
-            except:
+            except Exception:
                 self.logger.exception('User data malformed. ')
+                return []
         else:
             self.logger.info('No new user to acquire')
             return []
 
-        actives = list()
         for user in users:
-            fileDoc = dict()
-            fileDoc['asoworker'] = self.config.asoworker
-            fileDoc['subresource'] = 'acquireTransfers'
-            fileDoc['username'] = user[0]
-
-            self.logger.debug("Retrieving transfers from oracleDB for user: %s " % user[0])
-
-            try:
-                result = db.post(self.config.oracleFileTrans,
-                                 data=encodeRequest(fileDoc))
-            except Exception as ex:
-                self.logger.error("Failed to acquire transfers \
-                                  from oracleDB: %s" %ex)
-                continue
-
-            self.doc_acq = str(result)
             for i in range(len(user)):
                 if not user[i]:
                     user[i] = ''
                 user[i] = str(user[i])
-            actives.append(user)
 
-
-            self.logger.debug("Transfers retrieved from oracleDB. %s " % users)
+        self.logger.debug("Transfers retrieved from oracleDB. %s " % users)
 
         return users
 

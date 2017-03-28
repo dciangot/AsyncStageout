@@ -209,20 +209,49 @@ class TransferWorker:
             fileDoc['vogroup'] = group
             fileDoc['vorole'] = role
             fileDoc['limit'] =  self.config.max_files_per_transfer
-            result = []
 
             self.logger.debug('Request: ' + str(fileDoc))
             try:
                 results = self.oracleDB.get(self.config.oracleFileTrans,
                                             data=encodeRequest(fileDoc))
                 result = oracleOutputMapping(results)
-                res = [[x['source'], x['destination']] for x in result]
-                res.sort()
-                res = list(k for k, _ in itertools.groupby(res))
             except Exception as ex:
                 self.logger.error("Failed to get acquired transfers \
                                   from oracleDB: %s" %ex)
                 return [], {}
+
+            # if no documents already in acquired, get new ones and get them
+            if len(result) == 0:
+                fileDoc2 = dict()
+                fileDoc2['asoworker'] = self.config.asoworker
+                fileDoc2['subresource'] = 'acquireTransfers'
+                fileDoc2['username'] = self.user
+                self.logger.debug("Retrieving new transfers from oracleDB for user: %s " % self.user)
+
+                try:
+                    self.oracleDB.db.post(self.config.oracleFileTrans,
+                                          data=encodeRequest(fileDoc2))
+                except Exception as ex:
+                    self.logger.error("Failed to acquire transfers \
+                                      from oracleDB: %s" % ex)
+                    return [], {}
+
+                try:
+                    results = self.oracleDB.get(self.config.oracleFileTrans,
+                                                data=encodeRequest(fileDoc))
+                    result = oracleOutputMapping(results)
+                    res = [[x['source'], x['destination']] for x in result]
+                    res.sort()
+                    res = list(k for k, _ in itertools.groupby(res))
+                except Exception as ex:
+                    self.logger.error("Failed to get acquired transfers \
+                                      from oracleDB: %s" % ex)
+                    return [], {}
+            else:
+                res = [[x['source'], x['destination']] for x in result]
+                res.sort()
+                res = list(k for k, _ in itertools.groupby(res))
+
             return res, result
         else:
             query = {'group': True,
