@@ -23,9 +23,10 @@ from optparse import OptionParser
 from RESTInteractions import HTTPRequests
 from ServerUtilities import encodeRequest, oracleOutputMapping
 from ServerUtilities import TRANSFERDB_STATES, PUBLICATIONDB_STATES
+import requests
 
 def send(document):
-    return requests.post('http://monit-metrics-dev:10012/', data=json.dumps(document), headers={ "Content-Type": "application/json; charset=UTF-8"})
+    return requests.post('http://monit-metrics:10012/', data=json.dumps(document), headers={ "Content-Type": "application/json; charset=UTF-8"})
 
 def send_and_check(document, should_fail=False):
     response = send(document)
@@ -33,7 +34,7 @@ def send_and_check(document, should_fail=False):
 
 
 if __name__ == "__main__":
-    server = HTTPRequests('asotest3.cern.ch',
+    server = HTTPRequests('cmsweb-testbed.cern.ch',
                           '/home/dciangot/proxy',
                           '/home/dciangot/proxy')
 
@@ -45,7 +46,7 @@ if __name__ == "__main__":
 
     result = dict()
     try:
-        result = server.get('/crabserver/dev/filetransfers',
+        result = server.get('/crabserver/preprod/filetransfers',
                          data=encodeRequest(fileDoc))
     except Exception as ex:
         print ("Failed to acquire transfers from oracleDB: %s" % ex)
@@ -55,12 +56,13 @@ if __name__ == "__main__":
 
     #print (result)
 
-    metrics = []
 
     for res in results:
+        metrics = []
         user = res['username']
+        print(user)
         try:
-            stat = server.get('/crabserver/dev/filetransfers', 
+            stat = server.get('/crabserver/preprod/filetransfers', 
                               data=encodeRequest({'subresource': 'groupedTransferStatistics', 
                                                   'grouping': 1, 
                                                   'asoworker': 'asoprod1',
@@ -71,10 +73,10 @@ if __name__ == "__main__":
             print ("Failed to acquire user stats from oracleDB: %s" % ex)
             sys.exit(0) 
     
-        print (stat)
+        #print (stat)
 
-        sources = [x['source'] for x in stats]
-        destinations = [x['destination'] for x in stats]
+        sources = list(set([x['source'] for x in stats]))
+        destinations = list(set([x['destination'] for x in stats]))
 
         for src in sources:
             for dst in destinations:
@@ -94,27 +96,32 @@ if __name__ == "__main__":
                 }
                 status=tmp
 
+                empty = True
                 for link in links:
                     status['transfers'][TRANSFERDB_STATES[link['transfer_state']]]['count'] = link['nt']
                     tmp['transfers'][TRANSFERDB_STATES[link['transfer_state']]]['count'] = link['nt']
+                    if not link['nt'] == 0:
+                        empty = False
 
                 #print (json.dumps(tmp))
+                if empty:
+                    continue
                 metrics.append(tmp)
-    print (metrics)
-    while True:
+        while True:
+            try:
+                tmp_transfer = open("tmp_transfer","w")
+                tmp_transfer.write(json.dumps(metrics))
+                tmp_transfer.close()
+                break
+            except Exception as ex:
+                print(ex)
+                continue
+
+        print (len(metrics),len(sources),len(destinations))
         try:
-            tmp_transfer = open("tmp_transfer","w")
-            tmp_transfer.write(json.dumps(metrics))
-            tmp_transfer.close()
-            break
+            send_and_check(metrics)
         except Exception as ex:
             print(ex)
-            continue
-
-    try:
-        send_and_check(metrics)
-    except Exception as ex:
-        print(ex)
 
 
     sys.exit(0)
