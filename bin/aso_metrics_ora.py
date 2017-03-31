@@ -50,8 +50,7 @@ if __name__ == "__main__":
         'transfers':{ 'DONE':{'count':0,'size':0}, 'ACQUIRED':{'count':0,'size':0}, 'SUBMITTED':{'count':0,'size':0}, 'FAILED':{'count':0,'size':0}, 'RETRY':{'count':0,'size':0} }, 
         'publications':{'DONE':{'count':0}, 'ACQUIRED':{'count':0}, 'NEW':{'count':0}, 'FAILED':{'count':0}, 'RETRY':{'count':0}}
     }
-    status=tmp
-
+    status = tmp
 
     for doc in results:
         if doc['aso_worker']=="asoprod1":
@@ -68,7 +67,7 @@ if __name__ == "__main__":
             status['publications'][PUBLICATIONDB_STATES[doc['publication_state']]]['count'] = doc['nt']
             tmp['publications'][PUBLICATIONDB_STATES[doc['publication_state']]]['count'] = doc['nt']
 
-    #past.close()
+    # past.close()
     while True:
         try:
             tmp_transfer = open("tmp_transfer","w")
@@ -85,4 +84,5 @@ if __name__ == "__main__":
     except Exception as ex:
         print(ex)
     sys.exit(0)
+
 

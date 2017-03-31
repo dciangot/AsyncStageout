@@ -5,28 +5,19 @@ Kibana monitor script for OracleAso
 from __future__ import print_function
 from __future__ import division
 
-import os
 import sys
 import json
-import time
-import pycurl 
-import urllib
-import urllib2
-import httplib
-import logging
-import datetime
-import subprocess
-from urlparse import urljoin
 from socket import gethostname
-from optparse import OptionParser
 
 from RESTInteractions import HTTPRequests
 from ServerUtilities import encodeRequest, oracleOutputMapping
-from ServerUtilities import TRANSFERDB_STATES, PUBLICATIONDB_STATES
+from ServerUtilities import TRANSFERDB_STATES
 import requests
+
 
 def send(document):
     return requests.post('http://monit-metrics:10012/', data=json.dumps(document), headers={ "Content-Type": "application/json; charset=UTF-8"})
+
 
 def send_and_check(document, should_fail=False):
     response = send(document)
@@ -54,8 +45,7 @@ if __name__ == "__main__":
     
     results = oracleOutputMapping(result)
 
-    #print (result)
-
+    # print (result)
 
     for res in results:
         metrics = []
@@ -73,7 +63,7 @@ if __name__ == "__main__":
             print ("Failed to acquire user stats from oracleDB: %s" % ex)
             sys.exit(0) 
     
-        #print (stat)
+        # print (stat)
 
         sources = list(set([x['source'] for x in stats]))
         destinations = list(set([x['destination'] for x in stats]))
@@ -88,11 +78,11 @@ if __name__ == "__main__":
                     'user': user,
                     'destination': dst,
                     'source': src,
-                    'transfers':{ 'DONE':{'count':0,'size':0}, 
-                                  'ACQUIRED':{'count':0,'size':0}, 
-                                  'SUBMITTED':{'count':0,'size':0}, 
-                                  'FAILED':{'count':0,'size':0}, 
-                                  'RETRY':{'count':0,'size':0} } 
+                    'transfers': {'DONE': {'count':0,'size':0},
+                                  'ACQUIRED': {'count':0,'size':0},
+                                  'SUBMITTED': {'count':0,'size':0},
+                                  'FAILED': {'count':0,'size':0},
+                                  'RETRY': {'count':0,'size':0} }
                 }
                 status=tmp
 
@@ -103,7 +93,7 @@ if __name__ == "__main__":
                     if not link['nt'] == 0:
                         empty = False
 
-                #print (json.dumps(tmp))
+                # print (json.dumps(tmp))
                 if empty:
                     continue
                 metrics.append(tmp)
@@ -122,7 +112,6 @@ if __name__ == "__main__":
             send_and_check(metrics)
         except Exception as ex:
             print(ex)
-
 
     sys.exit(0)
 
