@@ -1,2 +1,0 @@
-AsyncStageOut release notes
-===========================
